@@ -1,9 +1,9 @@
-# streamneon.py
-import os, time, uuid, asyncio
+# streammeon.py  — KMK Live APIs (auth, live sessions, chat WS, WebRTC signaling WS)
+import os, time, uuid
 from datetime import datetime, timedelta
-from typing import Dict
+from typing import Dict, Any
 
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Header, status
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field as PydField, EmailStr
 from sqlmodel import SQLModel, Field, create_engine, Session, select
@@ -15,21 +15,21 @@ JWT_SECRET = os.getenv("JWT_SECRET", "CHANGE_ME_SUPER_SECRET")
 JWT_ALG = "HS256"
 ACCESS_TTL_MIN = int(os.getenv("JWT_TTL_MIN", "120"))
 
-# IMPORTANT:
-# - For local dev against Railway, use EXTERNAL DB URL with sslmode=require
-# - For production inside Railway, use the INTERNAL URL
-
-DB_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL")
+# DATABASE_URL is injected by Railway (prefer internal on prod, public for local)
+DB_URL = os.getenv("DATABASE_URL") or os.getenv("DATABASE_PUBLIC_URL") or "sqlite:///./kmk_live.db"
 engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
 
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(title="KMK Live (Python)")
+app = FastAPI(title="KROB MOK KALIP — STREAMMEON APIs")
 
-# tighten allow_origins in prod (e.g., ["https://stream.kmk.railway.app"])
+# TODO: in production, set your frontend origins here instead of "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ------------------ DB Models ------------------
@@ -122,7 +122,7 @@ def require_role(role: str):
         return u
     return _checker
 
-# ------------------ REST: User/Auth ------------------
+# ------------------ REST: Auth ------------------
 @app.post("/auth/register", response_model=TokenOut, tags=["auth"])
 def register(data: RegisterIn):
     with Session(engine) as s:
@@ -151,9 +151,11 @@ async def create_live(body: LiveCreateIn, vendor: User = Depends(require_role("v
     with Session(engine) as s:
         s.add(sess); s.commit(); s.refresh(sess)
     return LiveDetail(
-        session_id=sess.id, title=sess.title,
+        session_id=sess.id,
+        title=sess.title,
         vendor={"id": vendor.id, "name": vendor.name},
-        is_live=True, started_at=sess.started_at.timestamp(),
+        is_live=True,
+        started_at=sess.started_at.timestamp(),
         viewer_count=get_viewer_count(sess.id),
     )
 
@@ -168,9 +170,10 @@ async def end_live(session_id: str, vendor: User = Depends(require_role("vendor"
         sess.is_live = False
         sess.ended_at = datetime.utcnow()
         s.add(sess); s.commit()
-    # Broadcast terminate and close connections
+    # notify clients & close rooms (chat + signaling)
     await broadcast(session_id, {"type": "terminate", "reason": "ended_by_vendor"})
-    await close_room(session_id)
+    await close_chat_room(session_id)
+    await close_signal_room(session_id)
 
 @app.get("/live/sessions/active", response_model=list[LiveSummary], tags=["live"])
 def list_active():
@@ -178,7 +181,8 @@ def list_active():
         rows = s.exec(select(LiveSession).where(LiveSession.is_live == True).order_by(LiveSession.started_at.desc())).all()
     return [
         LiveSummary(
-            session_id=r.id, title=r.title,
+            session_id=r.id,
+            title=r.title,
             vendor={"id": r.vendor_id},
             viewer_count=get_viewer_count(r.id),
         ) for r in rows
@@ -192,13 +196,15 @@ def get_session(session_id: str):
             raise HTTPException(404, "Session not found")
         vendor = s.get(User, sess.vendor_id)
     return LiveDetail(
-        session_id=sess.id, title=sess.title,
+        session_id=sess.id,
+        title=sess.title,
         vendor={"id": vendor.id, "name": vendor.name if vendor else "Unknown"},
-        is_live=sess.is_live, started_at=sess.started_at.timestamp(),
+        is_live=sess.is_live,
+        started_at=sess.started_at.timestamp(),
         viewer_count=get_viewer_count(sess.id),
     )
 
-# ------------------ WebSocket hub (text-only chat, ephemeral) ------------------
+# ------------------ WS: Chat (text-only, ephemeral) ------------------
 class Conn:
     def __init__(self, ws: WebSocket, user_id: int, name: str, role: str):
         self.ws = ws
@@ -207,16 +213,16 @@ class Conn:
         self.role = role
         self.last_msg = 0.0  # rate limit: 1 msg / 2s
 
-# rooms structure: { session_id: { websocket_obj: Conn } }
-rooms: Dict[str, Dict[WebSocket, Conn]] = {}
+# rooms: { session_id: { websocket_obj: Conn } }
+chat_rooms: Dict[str, Dict[WebSocket, Conn]] = {}
 
 def get_viewer_count(session_id: str) -> int:
-    return len(rooms.get(session_id, {}))
+    return len(chat_rooms.get(session_id, {}))
 
 async def broadcast(session_id: str, data: dict):
-    room = rooms.get(session_id, {})
+    room = chat_rooms.get(session_id, {})
     dead = []
-    for ws, _c in list(room.items()):
+    for ws in list(room.keys()):
         try:
             await ws.send_json(data)
         except Exception:
@@ -224,14 +230,14 @@ async def broadcast(session_id: str, data: dict):
     for ws in dead:
         room.pop(ws, None)
 
-async def close_room(session_id: str):
-    room = rooms.get(session_id, {})
+async def close_chat_room(session_id: str):
+    room = chat_rooms.get(session_id, {})
     for ws in list(room.keys()):
         try:
             await ws.close()
         except Exception:
             pass
-    rooms.pop(session_id, None)
+    chat_rooms.pop(session_id, None)
 
 @app.websocket("/ws/live/{session_id}")
 async def ws_live(session_id: str, websocket: WebSocket):
@@ -255,8 +261,8 @@ async def ws_live(session_id: str, websocket: WebSocket):
             await websocket.close(code=4404); return
 
     await websocket.accept()
-    rooms.setdefault(session_id, {})
-    rooms[session_id][websocket] = Conn(websocket, user_id, name, role)
+    chat_rooms.setdefault(session_id, {})
+    chat_rooms[session_id][websocket] = Conn(websocket, user_id, name, role)
 
     # Welcome + viewer count
     await websocket.send_json({"type": "welcome", "session_id": session_id, "viewer_count": get_viewer_count(session_id)})
@@ -267,10 +273,9 @@ async def ws_live(session_id: str, websocket: WebSocket):
             msg = await websocket.receive_json()
             if msg.get("type") == "chat":
                 # text-only, sanitize, rate-limit
-                c = rooms[session_id][websocket]
+                c = chat_rooms[session_id][websocket]
                 now = time.time()
                 if now - c.last_msg < 2.0:
-                    # soft drop (or send rate-limited notice)
                     continue
                 c.last_msg = now
 
@@ -295,23 +300,150 @@ async def ws_live(session_id: str, websocket: WebSocket):
                     "ts": int(time.time()*1000),
                 })
             else:
-                # ignore other types; extend for moderation etc.
+                # ignore unknown types
                 pass
 
     except WebSocketDisconnect:
         pass
     finally:
-        # remove conn and update viewer count
-        room = rooms.get(session_id, {})
+        room = chat_rooms.get(session_id, {})
         room.pop(websocket, None)
         if not room:
-            rooms.pop(session_id, None)
+            chat_rooms.pop(session_id, None)
         await broadcast(session_id, {"type": "viewer_count", "viewer_count": get_viewer_count(session_id)})
 
-# ------------------ Startup ------------------
+# ------------------ WS: WebRTC signaling (no third-party) ------------------
+# { session_id: { "publisher": WebSocket|None, "viewers": { viewer_id: WebSocket } } }
+signal_rooms: Dict[str, Dict[str, Any]] = {}
+
+def _signal_room(session_id: str) -> Dict[str, Any]:
+    room = signal_rooms.get(session_id)
+    if not room:
+        room = {"publisher": None, "viewers": {}}
+        signal_rooms[session_id] = room
+    return room
+
+async def _ws_send(ws: WebSocket, data: dict):
+    try:
+        await ws.send_json(data)
+    except Exception:
+        pass
+
+async def _ws_close(ws: WebSocket, code: int = 1000):
+    try:
+        await ws.close(code=code)
+    except Exception:
+        pass
+
+async def close_signal_room(session_id: str):
+    room = signal_rooms.get(session_id, {})
+    pub = room.get("publisher")
+    if pub:
+        try:
+            await pub.close()
+        except Exception:
+            pass
+    for ws in list(room.get("viewers", {}).values()):
+        try:
+            await ws.close()
+        except Exception:
+            pass
+    signal_rooms.pop(session_id, None)
+
+@app.websocket("/ws/signal/{session_id}")
+async def ws_signal(session_id: str, websocket: WebSocket):
+    """
+    Signaling protocol:
+      First client message must be: {"type":"hello","role":"publisher"|"viewer", ["viewerId":"<uuid>"]}
+      Viewer -> Publisher: {"type":"offer","viewerId":"...","sdp":"..."} / {"type":"ice","viewerId":"...","candidate": {...}}
+      Publisher -> Viewer: {"type":"answer","viewerId":"...","sdp":"..."} / {"type":"ice","viewerId":"...","candidate": {...}}
+    """
+    # Auth via ?token=JWT (same as chat)
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401); return
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.PyJWTError:
+        await websocket.close(code=4401); return
+
+    role = payload.get("role", "user")
+
+    # Only allow join if session exists & live
+    with Session(engine) as s:
+        sess = s.get(LiveSession, session_id)
+        if not sess or not sess.is_live:
+            await websocket.close(code=4404); return
+
+    await websocket.accept()
+    room = _signal_room(session_id)
+
+    # first message must declare role
+    try:
+        hello = await websocket.receive_json()
+    except Exception:
+        await _ws_close(websocket, 1002); return
+
+    if hello.get("type") != "hello" or hello.get("role") not in ("publisher", "viewer"):
+        await _ws_close(websocket, 1002); return
+
+    if hello["role"] == "publisher":
+        # only vendors should act as publisher
+        if role != "vendor":
+            await _ws_close(websocket, 4403); return
+        # one publisher per session
+        if room["publisher"] and room["publisher"] is not websocket:
+            await _ws_close(websocket, 4409); return
+        room["publisher"] = websocket
+        await _ws_send(websocket, {"type": "welcome", "as": "publisher"})
+
+    else:  # viewer
+        viewer_id = hello.get("viewerId")
+        if not viewer_id:
+            await _ws_close(websocket, 1002); return
+        room["viewers"][viewer_id] = websocket
+        await _ws_send(websocket, {"type": "welcome", "as": "viewer", "viewerId": viewer_id})
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            mtype = msg.get("type")
+
+            if mtype in ("offer", "ice") and hello["role"] == "viewer":
+                viewer_id = msg.get("viewerId")
+                pub = room.get("publisher")
+                if pub:
+                    await _ws_send(pub, {**msg, "viewerId": viewer_id})
+
+            elif mtype in ("answer", "ice") and hello["role"] == "publisher":
+                viewer_id = msg.get("viewerId")
+                vw = room["viewers"].get(viewer_id)
+                if vw:
+                    await _ws_send(vw, {**msg, "viewerId": viewer_id})
+
+            else:
+                # ignore unknown
+                pass
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # cleanup
+        if hello["role"] == "publisher":
+            if room.get("publisher") is websocket:
+                room["publisher"] = None
+        else:
+            v_id = hello.get("viewerId")
+            if v_id and room["viewers"].get(v_id) is websocket:
+                room["viewers"].pop(v_id, None)
+        if not room["publisher"] and not room["viewers"]:
+            signal_rooms.pop(session_id, None)
+
+# ------------------ Startup/Health ------------------
 @app.get("/health")
 def health():
-    return {"ok": True, "db": DB_URL.split("@")[-1] if "@" in DB_URL else DB_URL}
+    # avoid leaking DB details in prod
+    return {"ok": True}
 
 @app.on_event("startup")
 def on_start():
