@@ -66,6 +66,18 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "Bearer"
 
+# NEW: include user info in auth responses
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    name: str
+    role: str
+
+class TokenWithUserOut(BaseModel):
+    access_token: str
+    token_type: str = "Bearer"
+    user: UserOut
+
 class LiveCreateIn(BaseModel):
     title: str = PydField(min_length=1, max_length=120)
 
@@ -123,22 +135,28 @@ def require_role(role: str):
     return _checker
 
 # ------------------ REST: Auth ------------------
-@app.post("/auth/register", response_model=TokenOut, tags=["auth"])
+@app.post("/auth/register", response_model=TokenWithUserOut, tags=["auth"])
 def register(data: RegisterIn):
     with Session(engine) as s:
         if s.exec(select(User).where(User.email == data.email)).first():
             raise HTTPException(400, "Email already registered")
         u = User(email=data.email, name=data.name, role=data.role, password_hash=pwd.hash(data.password))
         s.add(u); s.commit(); s.refresh(u)
-        return TokenOut(access_token=make_token(u))
+        return TokenWithUserOut(
+            access_token=make_token(u),
+            user=UserOut(id=u.id, email=u.email, name=u.name, role=u.role),
+        )
 
-@app.post("/auth/login", response_model=TokenOut, tags=["auth"])
+@app.post("/auth/login", response_model=TokenWithUserOut, tags=["auth"])
 def login(data: LoginIn):
     with Session(engine) as s:
         u = s.exec(select(User).where(User.email == data.email)).first()
         if not u or not pwd.verify(data.password, u.password_hash):
             raise HTTPException(400, "Incorrect email/password")
-        return TokenOut(access_token=make_token(u))
+        return TokenWithUserOut(
+            access_token=make_token(u),
+            user=UserOut(id=u.id, email=u.email, name=u.name, role=u.role),
+        )
 
 @app.get("/me", tags=["auth"])
 def me(u: User = Depends(get_current_user)):
