@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agora Live Streaming – Mute & Volume Demo</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+      fieldset { margin-bottom: 16px; }
+      label { display: inline-block; min-width: 140px; }
+      input[type="text"], input[type="url"] { width: 320px; }
+      .row { margin: 8px 0; }
+      .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .video { width: 320px; height: 180px; background: #111; }
+      #log { white-space: pre-wrap; background: #f7f7f9; border: 1px solid #ddd; padding: 8px; height: 160px; overflow: auto; }
+      button { margin-right: 8px; }
+      .minor { color: #666; font-size: 12px; }
+      .muted { color: #b00; font-weight: 600; }
+      .badge { margin-left: 8px; padding: 2px 8px; border-radius: 10px; font-size: 12px; vertical-align: middle; }
+      .badge.ok { background: #e6ffed; color: #036600; border: 1px solid #9ae6b4; }
+      .badge.pending { background: #fffbea; color: #8a6d3b; border: 1px solid #f6e05e; }
+      .badge.error { background: #ffecec; color: #8b0000; border: 1px solid #feb2b2; }
+      .remote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+      .remote-item { width: 320px; height: 180px; background: #000; position: relative; }
+      .remote-item .label { position: absolute; left: 6px; bottom: 4px; color: #fff; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    </style>
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+  </head>
+  <body>
+    <h1>Agora Live Streaming – Mute & Volume <span id="sdkStatus" class="badge pending">SDK: not loaded</span></h1>
+    <div id="secureWarn" style="display:none;margin:10px 0;padding:8px 12px;border:1px solid #f6c343;background:#fff8e1;color:#8a6d3b;font-size:14px;border-radius:6px"></div>
+    <p class="minor">Use with the token server from <code>server/</code> (default http://localhost:4000).</p>
+
+    <fieldset>
+      <legend>Join Settings</legend>
+      <div class="row">
+        <label for="serverOrigin">Token server</label>
+        <input id="serverOrigin" type="url" value="http://localhost:4000" />
+        <span class="minor">/v1/rtc/token</span>
+      </div>
+      <div class="row">
+        <label for="channel">Channel</label>
+        <input id="channel" type="text" value="demo" />
+      </div>
+      <div class="row">
+        <label for="uid">UID</label>
+        <input id="uid" type="text" placeholder="Unique per channel (auto if empty)" />
+        <span class="minor">Use a unique ID per client.</span>
+      </div>
+      <div class="row">
+        <label>Role</label>
+        <label><input type="radio" name="role" value="host" checked /> Host</label>
+        <label><input type="radio" name="role" value="audience" /> Audience</label>
+      </div>
+      <details>
+        <summary>Manual token (optional)</summary>
+        <div class="row">
+          <label for="appId">App ID</label>
+          <input id="appId" type="text" placeholder="If using manual token" />
+        </div>
+        <div class="row">
+          <label for="token">Token</label>
+          <input id="token" type="text" placeholder="Paste a temp token to skip server" />
+        </div>
+      </details>
+      <div class="row">
+        <button id="joinBtn">Join</button>
+        <button id="leaveBtn" disabled>Leave</button>
+      </div>
+    </fieldset>
+
+    <div class="controls">
+      <fieldset>
+        <legend>Local Microphone</legend>
+        <div class="row">
+          <label for="muteLocal">Mute</label>
+          <input id="muteLocal" type="checkbox" />
+          <span id="muteLocalState" class="minor">unmuted</span>
+        </div>
+        <div class="row">
+          <label for="localVol">Capture volume</label>
+          <input id="localVol" type="range" min="0" max="400" value="100" />
+          <span class="minor">0–400</span>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Remote Playback</legend>
+        <div class="row">
+          <label for="remoteVol">Playback volume</label>
+          <input id="remoteVol" type="range" min="0" max="100" value="100" disabled />
+          <span class="minor">0–100</span>
+        </div>
+        <div class="row minor">
+          Remote users: <span id="remoteCount">0</span>
+        </div>
+      </fieldset>
+    </div>
+
+    <fieldset>
+      <legend>Preview (Local)</legend>
+      <video id="localVideo" class="video" autoplay playsinline muted></video>
+    </fieldset>
+
+    <fieldset>
+      <legend>Remote Video</legend>
+      <div id="remoteVideos" class="remote-grid"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Log</legend>
+      <div id="log"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Comments (Signaling)</legend>
+      <div class="row">
+        <div id="chatLog" style="height:160px; overflow:auto; border:1px solid #ddd; padding:8px; background:#fafafa; white-space:pre-wrap"></div>
+      </div>
+      <div class="row">
+        <input id="chatInput" type="text" placeholder="Type a comment…" style="width:50%" />
+        <label style="margin-left:8px"><input id="dmToHost" type="checkbox" /> Send to Host privately</label>
+        <span class="minor" style="margin-left:8px">Host UID: <span id="hostUidLabel">unknown</span></span>
+        <button id="sendBtn" style="margin-left:8px" type="button">Send</button>
+      </div>
+    </fieldset>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      function log(...args) {
+        const line = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+        const time = new Date().toLocaleTimeString();
+        logEl.textContent += `[${time}] ${line}\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      // Surface runtime errors in the on-page log for easier debugging
+      window.addEventListener('error', (e) => {
+        try { log('Runtime error:', e.message); } catch (_) {}
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        try { const msg = (e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection'; log(msg); } catch (_) {}
+      });
+      log('Demo script loaded');
+      // Secure context check (getUserMedia requires HTTPS except on localhost)
+      (function enforceSecureContext(){
+        try {
+          const warn = document.getElementById('secureWarn');
+          const joinBtn = document.getElementById('joinBtn');
+          const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+          if (!window.isSecureContext && !isLocalhost) {
+            const httpsUrl = `https://${location.host}${location.pathname}`;
+            warn.innerHTML = `This page is not in a secure context. Browsers block mic/camera on HTTP.<br/>Open the secure link: <a href="${httpsUrl}">${httpsUrl}</a>`;
+            warn.style.display = 'block';
+          }
+        } catch(_) {}
+      })();
+      // SDK status indicator helpers
+      const sdkStatusEl = document.getElementById('sdkStatus');
+      function setSdkStatus(text, cls) {
+        if (!sdkStatusEl) return;
+        sdkStatusEl.textContent = text;
+        sdkStatusEl.className = `badge ${cls}`;
+      }
+      if (window.AgoraRTC) {
+        const ver = window.AgoraRTC.VERSION || window.AgoraRTC.version || '';
+        setSdkStatus(`SDK: loaded ${ver}`.trim(), 'ok');
+      } else {
+        setSdkStatus('SDK: not loaded', 'pending');
+      }
+
+      // Simple dynamic loader to ensure Agora SDK is present
+      const SDK_CANDIDATES = [
+        'https://download.agora.io/sdk/release/AgoraRTC_N.js',
+        'https://download.agora.io/sdk/release/AgoraRTC_N-4.20.2.js',
+        'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N.js',
+        'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N-4.20.2.js'
+      ];
+      function loadScript(src) {
+        return new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = src; s.async = true; s.crossOrigin = 'anonymous';
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error('Failed to load ' + src));
+          document.head.appendChild(s);
+        });
+      }
+      async function ensureAgoraSdk() {
+        if (window.AgoraRTC) return window.AgoraRTC;
+        for (const url of SDK_CANDIDATES) {
+          try {
+            setSdkStatus('SDK: loading…', 'pending');
+            log('Loading SDK:', url);
+            await loadScript(url);
+            if (window.AgoraRTC) {
+              const ver = window.AgoraRTC.VERSION || window.AgoraRTC.version || '';
+              setSdkStatus(`SDK: loaded ${ver}`.trim(), 'ok');
+              return window.AgoraRTC;
+            }
+          } catch (e) {
+            log(e.message || e);
+          }
+        }
+        setSdkStatus('SDK: failed to load', 'error');
+        throw new Error('Unable to load Agora Web SDK');
+      }
+
+      // RTM/Signaling SDK loader
+      const RTM_CANDIDATES = [
+        'https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js',
+        'https://unpkg.com/agora-rtm-sdk@2.2.3/agora-rtm.js'
+      ];
+      async function ensureRtmSdk() {
+        if (window.AgoraRTM) return window.AgoraRTM;
+        for (const url of RTM_CANDIDATES) {
+          try { log('Loading RTM SDK:', url); await loadScript(url); if (window.AgoraRTM) return window.AgoraRTM; } catch (e) { log(e.message || e); }
+        }
+        throw new Error('Unable to load RTM SDK');
+      }
+
+      // When served from /demo, use the same origin for token server (works for IP/localhost, http/https)
+      (function initServerOriginDefault() {
+        try {
+          const input = $("serverOrigin");
+          if (!input) return;
+          // only override when running under our demo route
+          if (location.pathname.startsWith('/demo')) {
+            input.value = location.origin;
+          }
+        } catch (_) { /* noop */ }
+      })();
+
+      // Ensure UID has a unique default if empty
+      (function ensureDefaultUid() {
+        const uidEl = $("uid");
+        if (uidEl && !uidEl.value) {
+          const rand = Math.random().toString(36).slice(2, 8);
+          uidEl.value = `user_${rand}`;
+        }
+      })();
+
+      let client;
+      let localAudioTrack;
+      let localVideoTrack;
+      let joined = false;
+      const remoteUsers = new Map(); // uid -> { audioTrack, videoTrack }
+      let currentRemoteAudioTrack = null;
+      let rtm; // RTM client
+      let rtmChannelName = '';
+      let hostUid = '';
+
+      async function fetchRtcToken(serverOrigin, channel, role, uid) {
+        const params = new URLSearchParams({ channelName: channel, role, uid });
+        const url = `${serverOrigin.replace(/\/$/, '')}/v1/rtc/token?${params}`;
+        log('Fetching RTC token:', url);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`);
+        return res.json();
+      }
+
+      function getRole() {
+        const el = document.querySelector('input[name="role"]:checked');
+        return el ? el.value : 'audience';
+      }
+
+      function setUiJoined(state) {
+        joined = state;
+        $("joinBtn").disabled = state;
+        $("leaveBtn").disabled = !state;
+      }
+
+      function updateRemoteState() {
+        $("remoteCount").textContent = String(remoteUsers.size);
+        const first = remoteUsers.values().next().value;
+        currentRemoteAudioTrack = first ? first.audioTrack : null;
+        $("remoteVol").disabled = !currentRemoteAudioTrack;
+      }
+
+      function updateHostUidLabel() {
+        document.getElementById('hostUidLabel').textContent = hostUid || 'unknown';
+      }
+
+      async function join() {
+        try {
+          if (joined) return;
+          if (!window.isSecureContext && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && getRole()==='host') {
+            throw new Error('This page is HTTP. Use HTTPS to publish mic/cam.');
+          }
+          // Ensure SDK is available
+          await ensureAgoraSdk();
+          const channel = $("channel").value.trim();
+          const uid = $("uid").value.trim() || '0';
+          const role = getRole();
+          let appId, token, finalUid = uid;
+
+          const manualToken = $("token").value.trim();
+          if (manualToken) {
+            appId = $("appId").value.trim();
+            token = manualToken;
+            if (!appId || !token) throw new Error('Manual token requires App ID and Token');
+          } else {
+            const serverOrigin = $("serverOrigin").value.trim() || 'http://localhost:4000';
+            const t = await fetchRtcToken(serverOrigin, channel, role, uid);
+            appId = t.appId; token = t.token; finalUid = String(t.uid ?? uid);
+          }
+
+          client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+          client.on('user-published', async (user, mediaType) => {
+            log('user-published', user.uid, mediaType);
+            await client.subscribe(user, mediaType);
+            log('subscribed', user.uid, mediaType);
+            if (!remoteUsers.has(user.uid)) remoteUsers.set(user.uid, {});
+            const entry = remoteUsers.get(user.uid);
+            if (mediaType === 'audio') {
+              entry.audioTrack = user.audioTrack;
+              try {
+                await user.audioTrack.play(); // start playback
+                log('remote audio playing', user.uid);
+              } catch (err) {
+                log('remote audio play error:', err.message || err);
+              }
+            } else if (mediaType === 'video') {
+              entry.videoTrack = user.videoTrack;
+              // Create container and play remote video
+              const containerId = `remote-${user.uid}`;
+              let el = document.getElementById(containerId);
+              if (!el) {
+                el = document.createElement('div');
+                el.id = containerId;
+                el.className = 'remote-item';
+                const label = document.createElement('div');
+                label.className = 'label';
+                label.textContent = `uid: ${user.uid}`;
+                el.appendChild(label);
+                const host = document.getElementById('remoteVideos');
+                if (host) host.appendChild(el);
+              }
+              try {
+                user.videoTrack.play(el);
+                log('remote video playing', user.uid);
+              } catch (err) {
+                log('remote video play error:', err.message || err);
+              }
+              // Heuristic: the first remote with video is likely the Host
+              if (!hostUid) { hostUid = String(user.uid); updateHostUidLabel(); }
+            }
+            updateRemoteState();
+          });
+          function cleanupRemote(user, mediaType) {
+            log('user-unpublished', user.uid, mediaType);
+            const entry = remoteUsers.get(user.uid);
+            if (entry) {
+              if (mediaType === 'audio' && entry.audioTrack) { entry.audioTrack.stop(); entry.audioTrack = null; }
+              if (mediaType === 'video' && entry.videoTrack) {
+                entry.videoTrack.stop();
+                entry.videoTrack = null;
+                const el = document.getElementById(`remote-${user.uid}`);
+                if (el && el.parentNode) el.parentNode.removeChild(el);
+              }
+              if (!entry.audioTrack && !entry.videoTrack) remoteUsers.delete(user.uid);
+            }
+            if (String(user.uid) === hostUid && mediaType !== 'audio') { hostUid = ''; updateHostUidLabel(); }
+            updateRemoteState();
+          }
+          client.on('user-unpublished', cleanupRemote);
+          client.on('user-left', (user) => cleanupRemote(user, 'all'));
+
+          client.setClientRole(role);
+          await client.join(appId, channel, token || null, finalUid === '0' ? null : finalUid);
+          log('Joined channel', channel, 'as', role, 'uid', finalUid);
+
+          if (role === 'host') {
+            [localAudioTrack, localVideoTrack] = await Promise.all([
+              AgoraRTC.createMicrophoneAudioTrack(),
+              AgoraRTC.createCameraVideoTrack()
+            ]);
+            localVideoTrack.play('localVideo');
+            await client.publish([localAudioTrack, localVideoTrack]);
+            log('Published local tracks');
+            hostUid = String(finalUid);
+            updateHostUidLabel();
+          }
+
+          // Connect RTM and subscribe to comments channel (same as RTC channel)
+          try {
+            await ensureRtmConnected(channel, String(finalUid));
+          } catch (err) {
+            log('RTM error:', err.message || err);
+          }
+
+          setUiJoined(true);
+        } catch (e) {
+          log('Join error:', e.message || e);
+          alert(e.message || e);
+        }
+      }
+
+      async function leave() {
+        try {
+          if (!client) return;
+          if (localVideoTrack) { localVideoTrack.stop(); localVideoTrack.close(); localVideoTrack = null; }
+          if (localAudioTrack) { localAudioTrack.stop(); localAudioTrack.close(); localAudioTrack = null; }
+          await client.unpublish();
+          await client.leave();
+          client.removeAllListeners();
+          client = null;
+          remoteUsers.clear();
+          currentRemoteAudioTrack = null;
+          if (rtm) {
+            try { if (rtmChannelName) await rtm.unsubscribe(rtmChannelName); } catch (_) {}
+            try { await rtm.logout(); } catch (_) {}
+          }
+          rtm = null; rtmChannelName='';
+          updateRemoteState();
+          setUiJoined(false);
+          log('Left channel');
+        } catch (e) {
+          log('Leave error:', e.message || e);
+        }
+      }
+
+      $("joinBtn").addEventListener('click', () => join());
+      $("leaveBtn").addEventListener('click', () => leave());
+
+      $("muteLocal").addEventListener('change', async (e) => {
+        const muted = e.target.checked;
+        try {
+          if (localAudioTrack) {
+            await localAudioTrack.setEnabled(!muted);
+            $("muteLocalState").textContent = muted ? 'muted' : 'unmuted';
+            $("muteLocalState").className = muted ? 'muted' : 'minor';
+          }
+        } catch (err) { log('Mute error:', err.message || err); }
+      });
+
+      $("localVol").addEventListener('input', (e) => {
+        const v = Number(e.target.value);
+        if (localAudioTrack) {
+          try { localAudioTrack.setVolume(v); } catch (_) {}
+        }
+      });
+
+      $("remoteVol").addEventListener('input', (e) => {
+        const v = Number(e.target.value);
+        if (currentRemoteAudioTrack) {
+          try { currentRemoteAudioTrack.setVolume(v); } catch (_) {}
+        }
+      });
+
+      // Initialize UI state
+      updateRemoteState();
+
+      // Chat helpers
+      function appendChat(text) {
+        const log = document.getElementById('chatLog');
+        if (!log) return;
+        const time = new Date().toLocaleTimeString();
+        log.textContent += `[${time}] ${text}\n`;
+        log.scrollTop = log.scrollHeight;
+      }
+      async function ensureRtmConnected(channel, uid) {
+        await ensureRtmSdk();
+        if (rtm && rtmChannelName === channel) { return rtm; }
+        const origin = ($("serverOrigin").value.trim() || location.origin).replace(/\/$/, '');
+        const r = await fetch(`${origin}/v1/rtm/token?uid=${encodeURIComponent(uid)}`);
+        if (!r.ok) throw new Error('RTM token fetch failed');
+        const { appId: rtmAppId, token: rtmToken } = await r.json();
+        rtm = new AgoraRTM.RTM(rtmAppId, String(uid));
+        rtm.addEventListener('status', (s) => log('RTM status', s.state, s.reason||''));
+        rtm.addEventListener('message', (m) => {
+          if (m.messageType !== 'STRING') return;
+          if (m.channelType === 'MESSAGE' && m.channelName === rtmChannelName) {
+            appendChat(`${m.publisher}: ${m.message}`);
+          } else if (m.channelType === 'USER') {
+            appendChat(`DM ${m.publisher}: ${m.message}`);
+          }
+        });
+        await rtm.login({ token: rtmToken });
+        rtmChannelName = channel;
+        await rtm.subscribe(rtmChannelName);
+        log('RTM subscribed', rtmChannelName);
+        return rtm;
+      }
+
+      let sending = false;
+      async function sendChat() {
+        if (sending) return;
+        const inp = document.getElementById('chatInput');
+        const msg = inp.value.trim();
+        if (!msg) return;
+        try {
+          sending = true;
+          const channel = $("channel").value.trim();
+          const uidNow = $("uid").value.trim() || '0';
+          if (!rtm || !rtmChannelName) {
+            await ensureRtmConnected(channel, uidNow);
+          }
+          const dm = document.getElementById('dmToHost').checked;
+          const myRole = getRole();
+          if (dm && hostUid && myRole !== 'host') {
+            await rtm.publish(hostUid, msg, { channelType: 'USER', storeInHistory: false });
+            appendChat(`me → host(${hostUid}): ${msg}`);
+          } else {
+            await rtm.publish(rtmChannelName, msg, { channelType: 'MESSAGE', storeInHistory: false });
+            appendChat(`me (all): ${msg}`);
+          }
+          inp.value = '';
+        } catch (e) { log('Send error:', e.message || e); }
+        finally { sending = false; }
+      }
+      document.getElementById('sendBtn').addEventListener('click', sendChat);
+      document.getElementById('chatInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
+      });
+    </script>
+  </body>
+  </html>

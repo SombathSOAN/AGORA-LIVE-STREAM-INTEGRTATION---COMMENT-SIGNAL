@@ -1,15 +1,16 @@
-# Python / venv
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.log
 
-# IDE
-.idea/
+# IDE/OS
 .vscode/
-
-# OS
+.idea/
 .DS_Store
 
-# Secrets
+# Env/secrets
 .env
-*.env
+.env.*
