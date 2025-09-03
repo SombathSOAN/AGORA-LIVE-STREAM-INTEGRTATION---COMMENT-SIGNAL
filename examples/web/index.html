@@ -5,24 +5,74 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Agora Live Streaming – Mute & Volume Demo</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
-      fieldset { margin-bottom: 16px; }
-      label { display: inline-block; min-width: 140px; }
-      input[type="text"], input[type="url"] { width: 320px; }
-      .row { margin: 8px 0; }
+      :root {
+        --bg: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --brand: #e11d48; /* pink/red for LIVE */
+        --ok: #10b981;
+        --warn: #f59e0b;
+        --card-bg: #ffffff;
+        --pill-bg: #374151;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0f14;
+          --text: #e5e7eb;
+          --muted: #9ca3af;
+          --border: #1f2937;
+          --card-bg: #0f141a;
+          --pill-bg: #111827;
+        }
+      }
+      html, body { height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto;
+      }
+      fieldset {
+        margin: 16px 0; border: 1px solid var(--border); border-radius: 10px;
+        background: var(--card-bg);
+      }
+      legend { padding: 0 8px; font-weight: 600; }
+      label { display: inline-block; min-width: 160px; }
+      input[type="text"], input[type="url"], select { width: 100%; max-width: 520px; }
+      .row { margin: 10px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-      .video { width: 320px; height: 180px; background: #111; }
-      #log { white-space: pre-wrap; background: #f7f7f9; border: 1px solid #ddd; padding: 8px; height: 160px; overflow: auto; }
-      button { margin-right: 8px; }
-      .minor { color: #666; font-size: 12px; }
-      .muted { color: #b00; font-weight: 600; }
+      .video { width: 100%; max-width: 480px; aspect-ratio: 16/9; background: #111; border-radius: 8px; }
+      #log { white-space: pre-wrap; background: #0b0f14; color: #e5e7eb; border: 1px solid var(--border); padding: 8px; height: 160px; overflow: auto; border-radius: 8px; }
+      .panel { height: 160px; overflow: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: #0b0f14; color: #e5e7eb; white-space: pre-wrap; }
+      button { margin-right: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #111827; color: #e5e7eb; cursor: pointer; }
+      button:disabled { opacity: .6; cursor: not-allowed; }
+      .minor { color: var(--muted); font-size: 12px; }
+      .muted { color: #ef4444; font-weight: 600; }
       .badge { margin-left: 8px; padding: 2px 8px; border-radius: 10px; font-size: 12px; vertical-align: middle; }
-      .badge.ok { background: #e6ffed; color: #036600; border: 1px solid #9ae6b4; }
-      .badge.pending { background: #fffbea; color: #8a6d3b; border: 1px solid #f6e05e; }
-      .badge.error { background: #ffecec; color: #8b0000; border: 1px solid #feb2b2; }
+      .badge.ok { background: #064e3b; color: #34d399; border: 1px solid #065f46; }
+      .badge.pending { background: #5b3b03; color: #fde68a; border: 1px solid #78350f; }
+      .badge.error { background: #7f1d1d; color: #fecaca; border: 1px solid #991b1b; }
       .remote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-      .remote-item { width: 320px; height: 180px; background: #000; position: relative; }
+      .remote-item { width: 100%; max-width: 320px; aspect-ratio: 16/9; background: #000; position: relative; border-radius: 8px; overflow: hidden; }
       .remote-item .label { position: absolute; left: 6px; bottom: 4px; color: #fff; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+      /* KPI row for mobile/desktop */
+      .kpi-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; font-weight: 700; font-size: 12px; }
+      .pill.live { background: linear-gradient(90deg, var(--brand), #f43f5e); color: #fff; }
+      .pill.off { background: var(--pill-bg); color: #e5e7eb; font-weight: 600; }
+      .kpi { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; background: var(--pill-bg); color: #e5e7eb; }
+      .kpi svg { width: 16px; height: 16px; }
+      .spacer { flex: 1 1 auto; }
+      @media (max-width: 900px) {
+        .controls { grid-template-columns: 1fr; }
+        label { min-width: 120px; }
+      }
+      @media (max-width: 640px) {
+        .row { flex-direction: column; align-items: stretch; }
+        label { width: 100%; }
+        input[type="text"], input[type="url"], select, button { width: 100%; }
+      }
     </style>
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
   </head>
@@ -85,6 +135,21 @@
       </fieldset>
 
       <fieldset>
+        <legend>Local Camera</legend>
+        <div class="row">
+          <label>Facing</label>
+          <label><input type="radio" name="camFacing" id="camFront" value="user" checked /> Front</label>
+          <label style="margin-left:8px"><input type="radio" name="camFacing" id="camBack" value="environment" /> Back</label>
+          <button id="switchCamBtn" type="button" style="margin-left:8px">Switch</button>
+        </div>
+        <div class="row">
+          <label for="camSelect">Device</label>
+          <select id="camSelect" style="min-width:260px"></select>
+          <label style="margin-left:8px"><input id="mirrorPreview" type="checkbox" checked /> Mirror preview</label>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>Remote Playback</legend>
         <div class="row">
           <label for="remoteVol">Playback volume</label>
@@ -99,7 +164,40 @@
 
     <fieldset>
       <legend>Preview (Local)</legend>
-      <video id="localVideo" class="video" autoplay playsinline muted></video>
+      <video id="localVideo" class="video" autoplay playsinline muted style="transform: scaleX(-1);"></video>
+    </fieldset>
+
+    <fieldset>
+      <legend>Live Backend (FastAPI) – Presence & Duration</legend>
+      <div class="kpi-row" style="margin:8px 12px 0 12px">
+        <span id="liveBadge" class="pill off" title="WebSocket status">LIVE</span>
+        <span class="kpi" title="Current non-vendor viewers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <strong id="viewerCountLabel">0</strong>
+        </span>
+        <span class="kpi" title="Unique viewers this session">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="0.01"/></svg>
+          <strong id="viewsTotalLabel">0</strong>
+        </span>
+        <span class="kpi" title="Elapsed live duration"><strong id="liveDurationLabel">00:00:00</strong></span>
+        <span class="spacer"></span>
+      </div>
+      <div class="row" style="padding:8px 12px 0 12px">
+        <label for="backendOrigin">Backend origin</label>
+        <input id="backendOrigin" type="url" value="http://localhost:8000" />
+      </div>
+      <div class="row" style="padding:0 12px">
+        <label for="liveSessionId">Session ID</label>
+        <input id="liveSessionId" type="text" placeholder="sess_xxx from /live/sessions or /active" />
+      </div>
+      <div class="row" style="padding:0 12px 8px 12px">
+        <label for="jwtToken">JWT</label>
+        <input id="jwtToken" type="text" placeholder="Paste Bearer JWT (from /auth/login)" />
+      </div>
+      <div class="row" style="padding:0 12px 12px 12px">
+        <button id="connectLiveBtn" type="button">Connect Live WS</button>
+        <button id="disconnectLiveBtn" type="button" disabled>Disconnect</button>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -115,10 +213,10 @@
     <fieldset>
       <legend>Comments (Signaling)</legend>
       <div class="row">
-        <div id="chatLog" style="height:160px; overflow:auto; border:1px solid #ddd; padding:8px; background:#fafafa; white-space:pre-wrap"></div>
+        <div id="chatLog" class="panel"></div>
       </div>
       <div class="row">
-        <input id="chatInput" type="text" placeholder="Type a comment…" style="width:50%" />
+        <input id="chatInput" type="text" placeholder="Type a comment…" />
         <label style="margin-left:8px"><input id="dmToHost" type="checkbox" /> Send to Host privately</label>
         <span class="minor" style="margin-left:8px">Host UID: <span id="hostUidLabel">unknown</span></span>
         <button id="sendBtn" style="margin-left:8px" type="button">Send</button>
@@ -177,10 +275,15 @@
         'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N.js',
         'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N-4.20.2.js'
       ];
+      function isSameOrigin(u) {
+        try { return new URL(u, location.href).origin === location.origin; } catch (_) { return false; }
+      }
       function loadScript(src) {
         return new Promise((resolve, reject) => {
           const s = document.createElement('script');
-          s.src = src; s.async = true; s.crossOrigin = 'anonymous';
+          s.src = src; s.async = true;
+          // Avoid setting crossOrigin for same-origin scripts (iOS WebKit quirk)
+          if (!isSameOrigin(src)) s.crossOrigin = 'anonymous';
           s.onload = () => resolve();
           s.onerror = () => reject(new Error('Failed to load ' + src));
           document.head.appendChild(s);
@@ -208,6 +311,8 @@
 
       // RTM/Signaling SDK loader
       const RTM_CANDIDATES = [
+        // Same-origin proxy served by the token server to avoid iOS security errors on self-signed certs
+        `${location.origin.replace(/\/$/, '')}/demo/rtm/agora-rtm.js`,
         'https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js',
         'https://unpkg.com/agora-rtm-sdk@2.2.3/agora-rtm.js'
       ];
@@ -275,6 +380,51 @@
         const first = remoteUsers.values().next().value;
         currentRemoteAudioTrack = first ? first.audioTrack : null;
         $("remoteVol").disabled = !currentRemoteAudioTrack;
+      }
+
+      async function refreshCameraList() {
+        try {
+          const cams = await AgoraRTC.getCameras();
+          const sel = document.getElementById('camSelect');
+          if (!sel) return;
+          const old = sel.value;
+          sel.innerHTML = '';
+          for (const c of cams) {
+            const opt = document.createElement('option');
+            opt.value = c.deviceId;
+            opt.textContent = c.label || `Camera ${c.deviceId.slice(0,6)}`;
+            sel.appendChild(opt);
+          }
+          // restore selection if possible
+          if (old) sel.value = old;
+        } catch (_) {}
+      }
+
+      function getPreferredFacing() {
+        const el = document.querySelector('input[name="camFacing"]:checked');
+        return el ? el.value : 'user';
+      }
+
+      async function switchCameraByFacing(facing) {
+        try {
+          if (!localVideoTrack) return;
+          const cams = await AgoraRTC.getCameras();
+          // Try label match first
+          const lc = (s) => (s||'').toLowerCase();
+          let target = cams.find(c => /back|rear|environment/.test(lc(c.label))) ;
+          if (facing === 'user') {
+            target = cams.find(c => /front|user|face/.test(lc(c.label)));
+          }
+          // Fallback: pick first/last
+          if (!target && cams.length) target = facing === 'user' ? cams[0] : cams[cams.length-1];
+          if (target) {
+            await localVideoTrack.setDevice(target.deviceId);
+            localVideoTrack.play('localVideo');
+            await refreshCameraList();
+            document.getElementById('camSelect').value = target.deviceId;
+            log('Switched camera to', target.label || target.deviceId);
+          }
+        } catch (e) { log('Switch camera error:', e.message || e); }
       }
 
       function updateHostUidLabel() {
@@ -371,15 +521,17 @@
           log('Joined channel', channel, 'as', role, 'uid', finalUid);
 
           if (role === 'host') {
+            const facing = getPreferredFacing();
             [localAudioTrack, localVideoTrack] = await Promise.all([
               AgoraRTC.createMicrophoneAudioTrack(),
-              AgoraRTC.createCameraVideoTrack()
+              AgoraRTC.createCameraVideoTrack({ facingMode: facing })
             ]);
             localVideoTrack.play('localVideo');
             await client.publish([localAudioTrack, localVideoTrack]);
             log('Published local tracks');
             hostUid = String(finalUid);
             updateHostUidLabel();
+            await refreshCameraList();
           }
 
           // Connect RTM and subscribe to comments channel (same as RTC channel)
@@ -448,6 +600,27 @@
         }
       });
 
+      // Camera controls
+      document.getElementById('switchCamBtn').addEventListener('click', async () => {
+        const facing = getPreferredFacing();
+        await switchCameraByFacing(facing);
+      });
+      document.getElementById('camSelect').addEventListener('change', async (e) => {
+        try {
+          if (localVideoTrack) {
+            await localVideoTrack.setDevice(e.target.value);
+            localVideoTrack.play('localVideo');
+          }
+        } catch (err) { log('Switch by device error:', err.message || err); }
+      });
+      document.getElementById('camFront').addEventListener('change', async (e) => { if (e.target.checked) await switchCameraByFacing('user'); });
+      document.getElementById('camBack').addEventListener('change', async (e) => { if (e.target.checked) await switchCameraByFacing('environment'); });
+      document.getElementById('mirrorPreview').addEventListener('change', (e) => {
+        const v = document.getElementById('localVideo');
+        if (e.target.checked) { v.style.transform = 'scaleX(-1)'; }
+        else { v.style.transform = ''; }
+      });
+
       // Initialize UI state
       updateRemoteState();
 
@@ -459,25 +632,37 @@
         log.textContent += `[${time}] ${text}\n`;
         log.scrollTop = log.scrollHeight;
       }
+      let rtmSelfUid = null;
       async function ensureRtmConnected(channel, uid) {
         await ensureRtmSdk();
-        if (rtm && rtmChannelName === channel) { return rtm; }
+        // Sanitize channel for RTM (no dots or spaces; <=64 chars)
+        function rtmSafeChannel(name) {
+          const cleaned = String(name || '')
+            .replace(/[^A-Za-z0-9_-]/g, '-')
+            .replace(/-+/g, '-');
+          return cleaned.slice(0, 64) || 'rtm';
+        }
+        const rtmChannel = rtmSafeChannel(channel);
+        if (rtm && rtmChannelName === rtmChannel) { return rtm; }
         const origin = ($("serverOrigin").value.trim() || location.origin).replace(/\/$/, '');
         const r = await fetch(`${origin}/v1/rtm/token?uid=${encodeURIComponent(uid)}`);
         if (!r.ok) throw new Error('RTM token fetch failed');
         const { appId: rtmAppId, token: rtmToken } = await r.json();
         rtm = new AgoraRTM.RTM(rtmAppId, String(uid));
+        rtmSelfUid = String(uid);
         rtm.addEventListener('status', (s) => log('RTM status', s.state, s.reason||''));
         rtm.addEventListener('message', (m) => {
           if (m.messageType !== 'STRING') return;
           if (m.channelType === 'MESSAGE' && m.channelName === rtmChannelName) {
+            // Hide own group messages from self
+            if (String(m.publisher) === String(rtmSelfUid)) return;
             appendChat(`${m.publisher}: ${m.message}`);
           } else if (m.channelType === 'USER') {
             appendChat(`DM ${m.publisher}: ${m.message}`);
           }
         });
         await rtm.login({ token: rtmToken });
-        rtmChannelName = channel;
+        rtmChannelName = rtmChannel;
         await rtm.subscribe(rtmChannelName);
         log('RTM subscribed', rtmChannelName);
         return rtm;
@@ -503,6 +688,7 @@
             appendChat(`me → host(${hostUid}): ${msg}`);
           } else {
             await rtm.publish(rtmChannelName, msg, { channelType: 'MESSAGE', storeInHistory: false });
+            // Show own message immediately in UI
             appendChat(`me (all): ${msg}`);
           }
           inp.value = '';
@@ -513,6 +699,112 @@
       document.getElementById('chatInput').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); sendChat(); }
       });
+
+      // ------------------------------
+      // FastAPI live WS (presence + duration)
+      // ------------------------------
+      let liveWs = null;
+      let liveTicker = null;
+      let liveDurationSeconds = 0;
+      let liveStartedAt = null; // ISO string or null
+      let liveEnded = false;
+      function fmtHMS(secs) {
+        secs = Math.max(0, Math.floor(Number(secs)||0));
+        const h = String(Math.floor(secs / 3600)).padStart(2,'0');
+        const m = String(Math.floor((secs % 3600) / 60)).padStart(2,'0');
+        const s = String(secs % 60).padStart(2,'0');
+        return `${h}:${m}:${s}`;
+      }
+      function setLiveUi(connected) {
+        const c = document.getElementById('connectLiveBtn');
+        const d = document.getElementById('disconnectLiveBtn');
+        if (c) c.disabled = connected;
+        if (d) d.disabled = !connected;
+        const live = document.getElementById('liveBadge');
+        if (live) {
+          live.className = 'pill ' + (connected ? 'live' : 'off');
+          live.textContent = connected ? 'LIVE' : 'OFFLINE';
+        }
+      }
+      function updateDurationLabel() {
+        const el = document.getElementById('liveDurationLabel');
+        if (el) el.textContent = fmtHMS(liveDurationSeconds);
+      }
+      function startTicker() {
+        stopTicker();
+        updateDurationLabel();
+        liveTicker = setInterval(() => {
+          if (liveEnded) { stopTicker(); return; }
+          liveDurationSeconds += 1;
+          updateDurationLabel();
+        }, 1000);
+      }
+      function stopTicker() { if (liveTicker) { clearInterval(liveTicker); liveTicker = null; } }
+      function updateViewerCount(n) {
+        const el = document.getElementById('viewerCountLabel');
+        if (el) el.textContent = String(n);
+      }
+      function updateViewsTotal(n) {
+        const el = document.getElementById('viewsTotalLabel');
+        if (el) el.textContent = String(n);
+      }
+      function connectLiveWs() {
+        try {
+          const origin = (document.getElementById('backendOrigin').value || '').replace(/\/$/, '');
+          const sid = (document.getElementById('liveSessionId').value || '').trim();
+          const jwt = (document.getElementById('jwtToken').value || '').trim();
+          if (!origin || !sid || !jwt) {
+            alert('Please fill Backend origin, Session ID, and JWT');
+            return;
+          }
+          const url = `${origin.replace('http','ws')}/ws/live/${encodeURIComponent(sid)}?token=${encodeURIComponent(jwt)}`;
+          log('Connecting live WS:', url);
+          liveWs = new WebSocket(url);
+          liveWs.onopen = () => { setLiveUi(true); log('Live WS connected'); };
+          liveWs.onclose = (e) => { setLiveUi(false); log('Live WS closed', e.code, e.reason||''); stopTicker(); };
+          liveWs.onerror = (e) => { log('Live WS error'); };
+          liveWs.onmessage = (ev) => {
+            try {
+              const data = JSON.parse(ev.data);
+              if (data.type === 'viewer_count') {
+                updateViewerCount(data.count || 0);
+                return;
+              }
+              if (data.type === 'views_total') {
+                updateViewsTotal(data.total || 0);
+                return;
+              }
+              if (data.type === 'session_info') {
+                liveStartedAt = data.started_at || null;
+                liveEnded = !!data.ended_at;
+                // Prefer server-provided seconds as baseline
+                liveDurationSeconds = Number(data.live_duration_seconds||0);
+                startTicker();
+                if (typeof data.viewer_count === 'number') updateViewerCount(data.viewer_count);
+                if (typeof data.views_total === 'number') updateViewsTotal(data.views_total);
+                return;
+              }
+              if (data.type === 'session_ended') {
+                liveEnded = true;
+                if (typeof data.live_duration_seconds === 'number') {
+                  liveDurationSeconds = data.live_duration_seconds;
+                  updateDurationLabel();
+                }
+                stopTicker();
+                return;
+              }
+            } catch(_) {}
+          };
+        } catch (e) {
+          log('Live WS connect error:', e.message || e);
+        }
+      }
+      function disconnectLiveWs() {
+        try { if (liveWs && liveWs.readyState === 1) liveWs.close(1000, 'client close'); } catch(_) {}
+        liveWs = null; stopTicker(); setLiveUi(false);
+      }
+      document.getElementById('connectLiveBtn').addEventListener('click', connectLiveWs);
+      document.getElementById('disconnectLiveBtn').addEventListener('click', disconnectLiveWs);
     </script>
   </body>
   </html>

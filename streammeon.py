@@ -5,7 +5,7 @@ import jwt
 import uuid
 import asyncio
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +23,7 @@ from sqlalchemy.orm import sessionmaker
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     # your Railway DB provided earlier
-    "postgresql://postgres:hCukXsTnUaLQmoVVsICaDhRSBWyXfVIZ@postgres-glu6.railway.internal:5432/railway"
+    "postgresql://postgres:UAHaBPHpRgWMXfCrYsQFqbOKnVPRUIuK@postgres.railway.internal:5432/railway"
 )
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-change-me")
 JWT_ALG = "HS256"
@@ -200,6 +200,38 @@ def me(
 def new_session_id() -> str:
     return "sess_" + str(uuid.uuid4())
 
+def _to_dt(val) -> Optional[datetime]:
+    try:
+        if isinstance(val, datetime):
+            return val
+    except Exception:
+        pass
+    return None
+
+def _now() -> datetime:
+    # Always use timezone-aware UTC to avoid naive comparisons
+    return datetime.now(timezone.utc)
+
+def live_duration_seconds(started_at: Optional[datetime], ended_at: Optional[datetime], is_live: Optional[bool] = None) -> int:
+    """Compute elapsed seconds for a live session.
+
+    If the session is live, measure from started_at to now; otherwise to ended_at.
+    Returns 0 when started_at is missing or invalid.
+    """
+    s = _to_dt(started_at)
+    if not s:
+        return 0
+    e = _to_dt(ended_at)
+    if e is None and (is_live is True or (is_live is None)):
+        e = _now()
+    try:
+        # Normalize to aware datetimes (assuming DB returns tz-aware)
+        delta = (e - s) if e else timedelta(seconds=0)
+        secs = int(max(0, delta.total_seconds()))
+        return secs
+    except Exception:
+        return 0
+
 @app.post("/live/sessions")
 def create_live(
     body: LiveCreateIn,
@@ -225,13 +257,16 @@ def create_live(
             {"id": sid, "vendor": int(claims["sub"]), "title": body.title}
         ).first()
         vend = conn.execute(text("SELECT id, name FROM users WHERE id=:i"), {"i": int(claims["sub"])}).first()
+    started_iso = created.started_at.isoformat() if created and created.started_at else None
     return {
         "session_id": sid,
         "title": body.title,
         "vendor": {"id": vend.id, "name": vend.name},
         "is_live": True,
-        "started_at": created.started_at.isoformat() if created and created.started_at else None,
-        "viewer_count": viewer_count(sid)
+        "started_at": started_iso,
+        "viewer_count": viewer_count(sid),
+        "views_total": views_total(sid),
+        "live_duration_seconds": live_duration_seconds(created.started_at if created else None, None, True),
     }
 
 @app.get("/live/sessions/{session_id}")
@@ -248,7 +283,9 @@ def get_live(session_id: str):
         "is_live": row.is_live,
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "ended_at": row.ended_at.isoformat() if row.ended_at else None,
-        "viewer_count": viewer_count(session_id)
+        "viewer_count": viewer_count(session_id),
+        "views_total": views_total(session_id),
+        "live_duration_seconds": live_duration_seconds(row.started_at, row.ended_at, row.is_live)
     }
 
 @app.get("/live/sessions/active")
@@ -272,7 +309,9 @@ def list_active():
                 "vendor": {"id": r.vendor_id, "name": r.vendor_name},
                 "is_live": r.is_live,
                 "started_at": r.started_at.isoformat() if r.started_at else None,
-                "viewer_count": viewer_count(r.id)
+                "viewer_count": viewer_count(r.id),
+                "views_total": views_total(r.id),
+                "live_duration_seconds": live_duration_seconds(r.started_at, None, True)
             })
     return {"items": out}
 
@@ -288,14 +327,17 @@ def end_live(
     claims = parse_token(token)
     uid = int(claims["sub"])
     with engine.begin() as conn:
-        row = conn.execute(text("SELECT vendor_id, is_live FROM live_sessions WHERE id=:i"), {"i": session_id}).first()
+        row = conn.execute(text("SELECT vendor_id, is_live, started_at FROM live_sessions WHERE id=:i"), {"i": session_id}).first()
         if not row:
             raise HTTPException(404, "Session not found")
         if row.vendor_id != uid or claims.get("role") != "vendor":
             raise HTTPException(403, "Only session vendor can end")
-        conn.execute(text("UPDATE live_sessions SET is_live=FALSE, ended_at=NOW() WHERE id=:i"), {"i": session_id})
+        # Capture ended_at
+        end_row = conn.execute(text("UPDATE live_sessions SET is_live=FALSE, ended_at=NOW() WHERE id=:i RETURNING ended_at"), {"i": session_id}).first()
+        ended_at = end_row.ended_at if end_row else None
     # notify all connections
-    asyncio.create_task(broadcast_event(session_id, {"type":"session_ended"}))
+    final_dur = live_duration_seconds(row.started_at if row else None, ended_at, False)
+    asyncio.create_task(broadcast_event(session_id, {"type":"session_ended", "ended_at": ended_at.isoformat() if ended_at else None, "live_duration_seconds": final_dur}))
     # close signaling peers gracefully
     asyncio.create_task(close_all_ws_for_session(session_id))
     # cleanup room state shortly after
@@ -366,6 +408,11 @@ class LiveRoom:
         self.signal_vendor: Optional[WebSocket] = None
         self.signal_viewers: set[WebSocket] = set()
         self.viewer_count: int = 0
+        # map chat websocket -> user_id (for selective broadcasts)
+        self.peer_user_ids: dict[WebSocket, int] = {}
+        # total unique viewers and set of seen viewer user IDs (exclude vendor)
+        self.total_views: int = 0
+        self.seen_viewer_ids: set[int] = set()
 
 rooms: Dict[str, LiveRoom] = {}
 
@@ -379,18 +426,30 @@ def get_room(sid: str) -> LiveRoom:
 def viewer_count(sid: str) -> int:
     return get_room(sid).viewer_count
 
-async def broadcast_event(sid: str, data: dict):
+def views_total(sid: str) -> int:
+    return getattr(get_room(sid), 'total_views', 0)
+
+async def broadcast_event(sid: str, data: dict, *, skip_ws: Optional[WebSocket] = None, skip_user_id: Optional[int] = None):
     room = get_room(sid)
     dead = []
     msg = json.dumps(data)
     for ws in list(room.chat_peers):
         try:
+            # skip sender when requested (by socket or by user id)
+            if skip_ws is not None and ws is skip_ws:
+                continue
+            if skip_user_id is not None and room.peer_user_ids.get(ws) == skip_user_id:
+                continue
             if ws.client_state == WebSocketState.CONNECTED:
                 await ws.send_text(msg)
         except Exception:
             dead.append(ws)
     for ws in dead:
         room.chat_peers.discard(ws)
+        try:
+            room.peer_user_ids.pop(ws, None)
+        except Exception:
+            pass
 
 async def cleanup_room_after(sid: str, delay: float = 1.0):
     try:
@@ -436,7 +495,7 @@ async def ws_live(websocket: WebSocket, session_id: str, token: str = Query(None
 
     # Make sure session exists and is live
     with engine.begin() as conn:
-        found = conn.execute(text("SELECT is_live FROM live_sessions WHERE id=:s"), {"s": session_id}).first()
+        found = conn.execute(text("SELECT is_live, started_at, ended_at FROM live_sessions WHERE id=:s"), {"s": session_id}).first()
         if not found or not found.is_live:
             await websocket.close(code=4404, reason="Session not found or not live")
             return
@@ -444,18 +503,33 @@ async def ws_live(websocket: WebSocket, session_id: str, token: str = Query(None
     await websocket.accept()
     room = get_room(session_id)
     room.chat_peers.add(websocket)
+    # track user id for this websocket for selective broadcasts and views
+    try:
+        uid_for_ws = int(claims["sub"])
+    except Exception:
+        uid_for_ws = None
+    if uid_for_ws is not None:
+        room.peer_user_ids[websocket] = uid_for_ws
 
     # Increase viewer count for non-vendor (vendors also connect to see chat, but shouldn’t count as viewer)
     is_vendor = (claims.get("role") == "vendor")
     if not is_vendor:
         room.viewer_count += 1
-        # announce
+        # first-time unique view per user_id
+        if uid_for_ws is not None and uid_for_ws not in room.seen_viewer_ids:
+            room.seen_viewer_ids.add(uid_for_ws)
+            room.total_views += 1
+            try:
+                await broadcast_event(session_id, {"type":"views_total", "total": room.total_views})
+            except Exception:
+                pass
+        # announce current viewer count
         try:
             await broadcast_event(session_id, {"type":"viewer_count", "count": room.viewer_count})
         except Exception:
             pass
 
-    # On connect: optionally send recent comments
+    # On connect: optionally send recent comments and session info
     try:
         with engine.begin() as conn:
             rows = conn.execute(
@@ -471,8 +545,21 @@ async def ws_live(websocket: WebSocket, session_id: str, token: str = Query(None
                 "message": r.message,
                 "ts": int(r.created_at.timestamp()*1000) if r.created_at else None
             }))
-        # also send current viewer count snapshot
+        # also send current viewer + views snapshot
         await websocket.send_text(json.dumps({"type":"viewer_count", "count": room.viewer_count}))
+        await websocket.send_text(json.dumps({"type":"views_total", "total": room.total_views}))
+        # and session info (started_at, elapsed)
+        started_at = found.started_at if hasattr(found, 'started_at') else None
+        ended_at = found.ended_at if hasattr(found, 'ended_at') else None
+        await websocket.send_text(json.dumps({
+            "type": "session_info",
+            "is_live": True,
+            "started_at": started_at.isoformat() if started_at else None,
+            "ended_at": ended_at.isoformat() if ended_at else None,
+            "live_duration_seconds": live_duration_seconds(started_at, ended_at, True),
+            "viewer_count": room.viewer_count,
+            "views_total": room.total_views
+        }))
     except Exception:
         # don't kill the socket if snapshot fails
         pass
@@ -514,6 +601,10 @@ async def ws_live(websocket: WebSocket, session_id: str, token: str = Query(None
     finally:
         # cleanup
         room.chat_peers.discard(websocket)
+        try:
+            room.peer_user_ids.pop(websocket, None)
+        except Exception:
+            pass
         if not is_vendor:
             room.viewer_count = max(0, room.viewer_count - 1)
             try:
