@@ -39,15 +39,65 @@ try {
   const demoDir = path.resolve(__dirname, '../../examples/web');
   // Loosen CSP for the demo so CDN scripts work
   // Allow inline script in demo page and CDN SDK script. Demo only.
-  const demoCsp = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://download.agora.io https://unpkg.com; connect-src 'self' http://localhost:4000 http://127.0.0.1:4000 http://[::1]:4000 https: wss:; media-src 'self' blob: data:;";
+  // Allow WebAssembly for RTM SDK: include 'wasm-unsafe-eval' (and legacy 'unsafe-eval' for older engines)
+  const demoCsp = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net https://fastly.jsdelivr.net https://download.agora.io https://unpkg.com; connect-src 'self' http://localhost:4000 http://127.0.0.1:4000 http://[::1]:4000 https: wss:; media-src 'self' blob: data:;";
   const demoCspMw = (_req, res, next) => {
     res.setHeader('Content-Security-Policy', demoCsp);
     next();
   };
+  // Same-origin proxy for RTM SDK to avoid iOS cross-origin security issues with self-signed certs
+  let rtmSdkCache = null; // Buffer
+  async function fetchOverHttps(url) {
+    const { URL } = require('url');
+    const u = new URL(url);
+    return new Promise((resolve, reject) => {
+      const req = https.get({ hostname: u.hostname, path: u.pathname + u.search, protocol: u.protocol, headers: { 'User-Agent': 'token-server' } }, (resp) => {
+        if (resp.statusCode !== 200) {
+          resp.resume();
+          return reject(new Error(`status ${resp.statusCode}`));
+        }
+        const chunks = [];
+        resp.on('data', d => chunks.push(d));
+        resp.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+      req.on('error', reject);
+    });
+  }
+  // Define proxy route BEFORE static middleware so it is not shadowed
+  app.get('/demo/rtm/agora-rtm.js', demoCspMw, async (_req, res) => {
+    try {
+      if (!rtmSdkCache) {
+        // Prefer a locally vendored copy if present
+        const localVendor = path.resolve(demoDir, 'vendor/agora-rtm.js');
+        if (fs.existsSync(localVendor)) {
+          rtmSdkCache = fs.readFileSync(localVendor);
+        }
+        const candidates = [
+          'https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js',
+          'https://unpkg.com/agora-rtm-sdk@2.2.3/agora-rtm.js'
+        ];
+        let lastErr;
+        if (!rtmSdkCache) {
+          for (const u of candidates) {
+            try { rtmSdkCache = await fetchOverHttps(u); break; } catch (e) { lastErr = e; console.warn('RTM SDK fetch failed:', u, e?.message || e); }
+          }
+        }
+        if (!rtmSdkCache) throw lastErr || new Error('failed to fetch RTM SDK');
+      }
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.end(rtmSdkCache);
+    } catch (e) {
+      console.warn('RTM SDK proxy error:', e?.message || e);
+      res.status(502).send('// failed to load RTM SDK');
+    }
+  });
+  // Serve static assets and HTML
+  app.use('/demo', demoCspMw, express.static(demoDir));
   app.get('/demo', demoCspMw, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(demoDir, 'index.html'));
   });
-  app.use('/demo', demoCspMw, express.static(demoDir));
   // eslint-disable-next-line no-console
   console.log(`Serving demo from ${demoDir} at /demo`);
 } catch (e) {
