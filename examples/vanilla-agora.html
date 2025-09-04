@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Streammeon + Agora (Minimal)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      video { width: 360px; height: 202px; background: #000; }
+      #chat { border: 1px solid #ddd; height: 160px; overflow: auto; padding: 6px; }
+      input[type=text] { width: 360px; }
+      code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h2>Streammeon + Agora (Minimal Frontend)</h2>
+
+    <p>
+      Paste your values then click one of Join buttons. Uses Agora RTC for video and RTM for chat.
+      Tokens are fetched from the Node token server in <code>server/</code>.
+    </p>
+
+    <div class="row">
+      <label>App Base <input id="appBase" type="text" value="http://localhost:8000" /></label>
+      <label>Token Base <input id="tokBase" type="text" value="http://localhost:4000" /></label>
+      <label>Agora App ID <input id="appId" type="text" value="" placeholder="AGORA_APP_ID" /></label>
+    </div>
+
+    <div class="row">
+      <label>JWT <input id="jwt" type="text" placeholder="Bearer eyJ..." /></label>
+      <label>Session ID <input id="sid" type="text" placeholder="sess_xxx from /live/sessions" /></label>
+      <label>User ID <input id="uid" type="text" placeholder="UUID from /auth/login" /></label>
+      <label>Name <input id="uname" type="text" placeholder="display name" /></label>
+    </div>
+
+    <div class="row">
+      <button id="joinVendor">Join as Vendor</button>
+      <button id="joinViewer">Join as Viewer</button>
+      <button id="leave">Leave</button>
+    </div>
+
+    <div class="row">
+      <video id="local" autoplay playsinline muted></video>
+      <video id="remote" autoplay playsinline></video>
+    </div>
+
+    <div class="row">
+      <input id="msg" type="text" placeholder="Type a message" />
+      <button id="send">Send</button>
+    </div>
+    <div id="chat"></div>
+
+    <script type="module">
+      import AgoraRTC from "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/esm/index.js";
+      import AgoraRTM from "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@1.6.3/AgoraRTM.esm.browser.js";
+
+      const el = (id) => document.getElementById(id);
+      const chat = el('chat');
+      const log = (who, text) => { const d = document.createElement('div'); d.textContent = `${who}: ${text}`; chat.appendChild(d); chat.scrollTop = chat.scrollHeight; };
+
+      async function getRtcToken(base, channel, role, uid) {
+        const params = new URLSearchParams({ channelName: channel, role, uid });
+        const res = await fetch(`${base}/v1/rtc/token?${params}`);
+        if (!res.ok) throw new Error('RTC token failed');
+        return res.json();
+      }
+      async function getRtmToken(base, uid) {
+        const params = new URLSearchParams({ uid });
+        const res = await fetch(`${base}/v1/rtm/token?${params}`);
+        if (!res.ok) throw new Error('RTM token failed');
+        return res.json();
+      }
+
+      let clientRTC = null, clientRTM = null, rtmChannel = null;
+      let localCam = null, localMic = null;
+      let presence = null;
+
+      async function join(role) {
+        const APP_BASE = el('appBase').value.trim();
+        const TOK_BASE = el('tokBase').value.trim();
+        const APP_ID   = el('appId').value.trim();
+        const JWT      = el('jwt').value.trim();
+        const SID      = el('sid').value.trim();
+        const UID      = el('uid').value.trim();
+        const NAME     = el('uname').value.trim() || UID;
+        if (!APP_ID || !JWT || !SID || !UID) { alert('Fill App ID, JWT, Session ID, User ID'); return; }
+
+        // RTC
+        const { token } = await getRtcToken(TOK_BASE, SID, role === 'vendor' ? 'host' : 'audience', UID);
+        clientRTC = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
+        clientRTC.setClientRole(role === 'vendor' ? 'host' : 'audience');
+        await clientRTC.join(APP_ID, SID, token, UID);
+        clientRTC.on('user-published', async (u, t) => {
+          await clientRTC.subscribe(u, t);
+          if (t === 'video') u.videoTrack.play('remote');
+          if (t === 'audio') u.audioTrack.play();
+        });
+        if (role === 'vendor') {
+          localCam = await AgoraRTC.createCameraVideoTrack();
+          localMic = await AgoraRTC.createMicrophoneAudioTrack();
+          await clientRTC.publish([localCam, localMic]);
+          localCam.play('local');
+        }
+
+        // RTM
+        const { token: rtmToken } = await getRtmToken(TOK_BASE, UID);
+        clientRTM = await AgoraRTM.createInstance(APP_ID);
+        await clientRTM.login({ uid: UID, token: rtmToken });
+        rtmChannel = clientRTM.createChannel(SID);
+        await rtmChannel.join();
+        rtmChannel.on('ChannelMessage', ({ text }, memberId) => log(memberId, text));
+
+        // Presence (optional)
+        try {
+          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+          presence = new WebSocket(`${proto}://${location.host}/ws/live/${SID}?token=${JWT}`);
+          presence.onmessage = (e) => {
+            const m = JSON.parse(e.data);
+            if (m.type === 'viewer_count') log('system', `Viewers: ${m.count}`);
+            if (m.type === 'comment') log(m.user_name || m.user_id, m.message);
+          };
+        } catch {}
+
+        log('system', `Joined as ${role}`);
+      }
+
+      async function sendMsg() {
+        const text = el('msg').value.trim();
+        if (!text || !rtmChannel) return;
+        await rtmChannel.sendMessage({ text });
+        log('me', text);
+        el('msg').value = '';
+      }
+
+      async function leave() {
+        try { if (rtmChannel) await rtmChannel.leave(); } catch {}
+        try { if (clientRTM) await clientRTM.logout(); } catch {}
+        try { if (localCam) localCam.close(); } catch {}
+        try { if (localMic) localMic.close(); } catch {}
+        try { if (clientRTC) await clientRTC.leave(); } catch {}
+        try { if (presence) presence.close(); } catch {}
+        clientRTC = clientRTM = rtmChannel = localCam = localMic = presence = null;
+        log('system', 'Left');
+      }
+
+      document.getElementById('joinVendor').onclick = () => join('vendor');
+      document.getElementById('joinViewer').onclick = () => join('viewer');
+      document.getElementById('send').onclick = sendMsg;
+      document.getElementById('leave').onclick = leave;
+    </script>
+  </body>
+  </html>
+

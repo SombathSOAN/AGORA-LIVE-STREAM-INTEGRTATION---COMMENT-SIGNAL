@@ -6,3 +6,4 @@ psycopg2-binary==2.9.9
 passlib[bcrypt]==1.7.4
 PyJWT==2.9.0
 pydantic[email]==2.11.7
+bcrypt==4.1.3

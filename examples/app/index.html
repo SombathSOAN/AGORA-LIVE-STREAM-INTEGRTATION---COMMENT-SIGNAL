@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Streammeon Demo App</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
+      h2 { margin-top: 24px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      input, select, button { padding: 6px 8px; }
+      input[type=text], input[type=password] { min-width: 260px; }
+      .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
+      .muted { color: #666; }
+      .ok { color: #0a0; }
+      .err { color: #c00; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+      .hidden { display: none; }
+      code { background:#f6f8fa; padding:2px 4px; border-radius:4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Streammeon Demo App</h1>
+
+    <div class="card">
+      <div class="row">
+        <label>API Base <input id="apiBase" type="text" value="http://localhost:8000" /></label>
+        <label>Token Base <input id="tokBase" type="text" value="http://localhost:4000" /></label>
+        <label>Agora App ID <input id="appId" type="text" placeholder="AGORA_APP_ID" /></label>
+      </div>
+      <div class="row">
+        <label>Email <input id="email" type="text" placeholder="you@example.com" /></label>
+        <label>Password <input id="password" type="password" placeholder="password" /></label>
+        <label>Name <input id="name" type="text" placeholder="display name" /></label>
+        <label>Role
+          <select id="role">
+            <option value="user">user</option>
+            <option value="vendor">vendor</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <button id="register">Register</button>
+        <button id="login">Login</button>
+        <span id="authStatus" class="muted"></span>
+      </div>
+      <div class="row">
+        <small class="muted">After login, values are saved to localStorage for the watch page.</small>
+      </div>
+    </div>
+
+    <div class="card hidden" id="vendorPanel">
+      <h2>Vendor</h2>
+      <div class="row">
+        <label>Title <input id="liveTitle" type="text" placeholder="My Live" value="My Live" /></label>
+        <button id="createLive">Create Live</button>
+        <span id="vendorStatus" class="muted"></span>
+      </div>
+      <div id="vendorLive" class="hidden">
+        <div>Session: <code id="sessionId"></code></div>
+        <div class="row">
+          <a id="openVendor" target="_blank">Open vendor live page</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Active Streams</h2>
+      <div id="activeList" class="grid"></div>
+      <div id="activeEmpty" class="muted">No active streams</div>
+    </div>
+
+    <script>
+      const apiBaseEl = document.getElementById('apiBase');
+      const tokBaseEl = document.getElementById('tokBase');
+      const appIdEl   = document.getElementById('appId');
+
+      // Restore saved settings
+      (function init() {
+        const saved = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        if (saved.apiBase) apiBaseEl.value = saved.apiBase;
+        if (saved.tokBase) tokBaseEl.value = saved.tokBase;
+        if (saved.appId)   appIdEl.value   = saved.appId;
+        if (saved.user) setUser(saved.user, saved.jwt);
+        refreshActive();
+        setInterval(refreshActive, 5000);
+      })();
+
+      function saveState(extras={}) {
+        const cur = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        const next = { ...cur, apiBase: apiBaseEl.value.trim(), tokBase: tokBaseEl.value.trim(), appId: appIdEl.value.trim(), ...extras };
+        localStorage.setItem('streammeon_state', JSON.stringify(next));
+      }
+
+      function setUser(user, jwt) {
+        window.currentUser = user || null;
+        window.jwt = jwt || null;
+        const status = document.getElementById('authStatus');
+        if (user && jwt) {
+          status.textContent = `Logged in as ${user.name} (${user.role})`;
+          status.className = 'ok';
+          document.getElementById('vendorPanel').classList.toggle('hidden', user.role !== 'vendor');
+        } else {
+          status.textContent = 'Not logged in';
+          status.className = 'muted';
+          document.getElementById('vendorPanel').classList.add('hidden');
+        }
+      }
+
+      async function register() {
+        const api = apiBaseEl.value.trim();
+        const payload = { email: email.value.trim(), name: name.value.trim(), password: password.value, role: role.value };
+        const res = await fetch(`${api}/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) { authStatus.textContent = 'Register failed'; authStatus.className = 'err'; return; }
+        const data = await res.json();
+        setUser(data.user, data.access_token);
+        saveState({ jwt: data.access_token, user: data.user });
+      }
+
+      async function login() {
+        const api = apiBaseEl.value.trim();
+        const payload = { email: email.value.trim(), password: password.value };
+        const res = await fetch(`${api}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) { authStatus.textContent = 'Login failed'; authStatus.className = 'err'; return; }
+        const data = await res.json();
+        setUser(data.user, data.access_token);
+        saveState({ jwt: data.access_token, user: data.user });
+      }
+
+      async function createLive() {
+        const api = apiBaseEl.value.trim();
+        const title = document.getElementById('liveTitle').value.trim() || 'My Live';
+        const res = await fetch(`${api}/live/sessions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${window.jwt}` }, body: JSON.stringify({ title })
+        });
+        if (!res.ok) { vendorStatus.textContent = 'Create live failed'; vendorStatus.className = 'err'; return; }
+        const data = await res.json();
+        document.getElementById('vendorLive').classList.remove('hidden');
+        document.getElementById('sessionId').textContent = data.session_id;
+        const url = new URL('./watch.html', location.href);
+        url.searchParams.set('sid', data.session_id);
+        document.getElementById('openVendor').href = url.toString();
+        vendorStatus.textContent = 'Live created';
+        vendorStatus.className = 'ok';
+        refreshActive();
+      }
+
+      async function refreshActive() {
+        const api = apiBaseEl.value.trim();
+        try {
+          const res = await fetch(`${api}/live/sessions/active`);
+          if (!res.ok) throw new Error('active failed');
+          const data = await res.json();
+          renderActive(data.items || []);
+        } catch (e) {
+          // ignore temporary errors
+        }
+      }
+
+      function renderActive(items) {
+        const container = document.getElementById('activeList');
+        const empty = document.getElementById('activeEmpty');
+        container.innerHTML = '';
+        if (!items.length) { empty.classList.remove('hidden'); return; }
+        empty.classList.add('hidden');
+        for (const it of items) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          const url = new URL('./watch.html', location.href); url.searchParams.set('sid', it.session_id);
+          card.innerHTML = `
+            <div><strong>${it.title}</strong></div>
+            <div class="muted">Vendor: ${it.vendor?.name || 'n/a'}</div>
+            <div>Viewers: ${it.viewer_count} • Duration: ${it.live_duration_seconds}s</div>
+            <div><a href="${url.toString()}" target="_blank">Join</a></div>
+          `;
+          container.appendChild(card);
+        }
+      }
+
+      document.getElementById('register').onclick = register;
+      document.getElementById('login').onclick = login;
+      document.getElementById('createLive').onclick = createLive;
+    </script>
+  </body>
+  </html>
+
