@@ -5,8 +5,10 @@
     <title>Streammeon + Agora (Minimal)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 16px; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 16px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
+      label { display: inline-grid; grid-template-columns: 140px 1fr; align-items: center; gap: 8px; }
+      @media (max-width: 560px) { label { grid-template-columns: 1fr; } }
       video { width: 360px; height: 202px; background: #000; }
       #chat { border: 1px solid #ddd; height: 160px; overflow: auto; padding: 6px; }
       input[type=text] { width: 360px; }
@@ -22,7 +24,7 @@
     </p>
 
     <div class="row">
-      <label>App Base <input id="appBase" type="text" value="https://192.168.102.133:8000" /></label>
+      <label>App Base <input id="appBase" type="text" value="https://172.20.10.3:8000" /></label>
       <label>Token Base <input id="tokBase" type="text" value="http://localhost:4000" /></label>
       <label>Agora App ID <input id="appId" type="text" value="" placeholder="AGORA_APP_ID" /></label>
     </div>

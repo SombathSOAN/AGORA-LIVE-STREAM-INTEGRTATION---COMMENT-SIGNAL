@@ -5,11 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>KMK Live</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; }
       h2 { margin-top: 24px; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
+      label { display: inline-grid; grid-template-columns: 140px 1fr; align-items: center; gap: 8px; }
       input, select, button { padding: 6px 8px; }
-      input[type=text], input[type=password] { min-width: 260px; }
+      label > input[type=text], label > input[type=password], label > select { min-width: 260px; }
+      @media (max-width: 560px) {
+        label { grid-template-columns: 1fr; }
+        label > input[type=text], label > input[type=password], label > select { min-width: 0; width: 100%; }
+      }
       .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
       .muted { color: #666; }
       .ok { color: #0a0; }

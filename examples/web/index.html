@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Agora Live Streaming – Mute & Volume Demo</title>
     <style>
       :root {
@@ -30,21 +30,34 @@
       body {
         background: var(--bg);
         color: var(--text);
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         margin: 0; padding: 16px; max-width: 1100px; margin-inline: auto;
       }
+      *, *::before, *::after { box-sizing: border-box; }
       fieldset {
         margin: 16px 0; border: 1px solid var(--border); border-radius: 10px;
         background: var(--card-bg);
       }
       legend { padding: 0 8px; font-weight: 600; }
-      label { display: inline-block; min-width: 160px; }
-      input[type="text"], input[type="url"], select { width: 100%; max-width: 520px; }
+      label { display: inline-block; }
+      /* Form rows use grid for crisp alignment */
+      .form-row { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 8px; align-items: center; }
+      .form-row > label:first-child { margin: 0; }
+      @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
+      /* Predictable input sizing */
+      input[type="text"], input[type="url"], input[type="password"], select {
+        height: 40px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+        background: var(--card-bg); color: var(--text); width: 100%;
+      }
+      textarea { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); }
+      input[type="text"], input[type="url"], input[type="password"], select, textarea, button { font-size: 16px; }
+      input[type="text"], input[type="url"], select { max-width: 520px; }
+      html { -webkit-text-size-adjust: 100%; }
       .row { margin: 10px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
       .video { width: 100%; max-width: 480px; aspect-ratio: 16/9; background: #111; border-radius: 8px; }
-      #log { white-space: pre-wrap; background: #0b0f14; color: #e5e7eb; border: 1px solid var(--border); padding: 8px; height: 160px; overflow: auto; border-radius: 8px; }
-      .panel { height: 160px; overflow: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: #0b0f14; color: #e5e7eb; white-space: pre-wrap; }
+      #log { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; background: #0b0f14; color: #e5e7eb; border: 1px solid var(--border); padding: 8px; height: 160px; overflow: auto; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .panel { height: 160px; overflow: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: #0b0f14; color: #e5e7eb; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
       button { margin-right: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #111827; color: #e5e7eb; cursor: pointer; }
       button:disabled { opacity: .6; cursor: not-allowed; }
       .minor { color: var(--muted); font-size: 12px; }
@@ -54,7 +67,13 @@
       .badge.pending { background: #5b3b03; color: #fde68a; border: 1px solid #78350f; }
       .badge.error { background: #7f1d1d; color: #fecaca; border: 1px solid #991b1b; }
       .remote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+      /* When there is only one remote, make it span full width */
+      .remote-grid.single { grid-template-columns: 1fr; }
+      .remote-grid.single .remote-item { max-width: none; }
       .remote-item { width: 100%; max-width: 320px; aspect-ratio: 16/9; background: #000; position: relative; border-radius: 8px; overflow: hidden; }
+      .remote-wrap { position: relative; }
+      .live-overlay { position: absolute; top: 8px; left: 8px; z-index: 2; pointer-events: none; }
+      .local-wrap { position: relative; }
       .remote-item .label { position: absolute; left: 6px; bottom: 4px; color: #fff; background: rgba(0,0,0,0.5); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
       /* KPI row for mobile/desktop */
       .kpi-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -64,6 +83,13 @@
       .kpi { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; background: var(--pill-bg); color: #e5e7eb; }
       .kpi svg { width: 16px; height: 16px; }
       .spacer { flex: 1 1 auto; }
+      /* Segmented toggle (radio-based) */
+      .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card-bg); }
+      .segmented input { display: none; }
+      .segmented label { padding: 8px 12px; cursor: pointer; user-select: none; background: var(--card-bg); color: var(--text); }
+      .segmented input:checked + label { background: #111827; color: #e5e7eb; }
+      /* border divider between options (works for two options) */
+      .segmented label + input + label { border-left: 1px solid var(--border); }
       @media (max-width: 900px) {
         .controls { grid-template-columns: 1fr; }
         label { min-width: 120px; }
@@ -79,37 +105,59 @@
   <body>
     <h1>Agora Live Streaming – Mute & Volume <span id="sdkStatus" class="badge pending">SDK: not loaded</span></h1>
     <div id="secureWarn" style="display:none;margin:10px 0;padding:8px 12px;border:1px solid #f6c343;background:#fff8e1;color:#8a6d3b;font-size:14px;border-radius:6px"></div>
-    <p class="minor">Use with the token server from <code>server/</code> (default http://localhost:4000).</p>
+    <!-- Hidden developer note about token server; not shown to end users -->
+    <p class="minor" style="display:none">Use with the token server from <code>server/</code> (default http://localhost:4000).</p>
 
     <fieldset>
       <legend>Account (Auth)</legend>
-      <div class="row">
+      <div class="form-row">
         <label for="loginEmail">Email</label>
         <input id="loginEmail" type="text" placeholder="you@example.com" />
-        <label for="loginPassword" style="margin-left:8px">Password</label>
+      </div>
+      <div class="form-row">
+        <label for="loginPassword">Password</label>
         <input id="loginPassword" type="password" placeholder="password" />
-        <button id="loginBackendBtn" type="button" style="margin-left:8px">Login</button>
-        <button id="logoutBackendBtn" type="button" style="margin-left:8px">Logout</button>
-        <span id="loginStatus" class="minor" style="margin-left:8px"></span>
       </div>
       <div class="row">
-        <label style="min-width:160px">Register (optional)</label>
-        <label style="margin-left:8px"><input type="radio" name="regRole" id="regRoleUser" value="user" checked /> user</label>
-        <label style="margin-left:8px"><input type="radio" name="regRole" id="regRoleVendor" value="vendor" /> vendor</label>
-        <label style="margin-left:8px">Name</label>
-        <input id="registerName" type="text" placeholder="display name" />
-        <button id="registerBackendBtn" type="button" style="margin-left:8px">Register</button>
+        <button id="loginBackendBtn" type="button">Login</button>
+        <button id="logoutBackendBtn" type="button">Logout</button>
+        <span id="loginStatus" class="minor"></span>
       </div>
+      <details id="registerDetails" style="margin-top:8px">
+        <summary>Register (optional)</summary>
+        <div class="row">
+          <label style="min-width:160px">Role</label>
+          <label><input type="radio" name="regRole" id="regRoleUser" value="user" checked /> user</label>
+          <label><input type="radio" name="regRole" id="regRoleVendor" value="vendor" /> vendor</label>
+        </div>
+        <div class="row">
+          <label>Name</label>
+          <input id="registerName" type="text" placeholder="display name" />
+        </div>
+        <div class="row">
+          <button id="registerBackendBtn" type="button">Register</button>
+        </div>
+        <div class="row minor">Uses the Email and Password above.</div>
+      </details>
     </fieldset>
 
     <fieldset>
       <legend>Join Settings</legend>
-      <div class="row">
+      <div class="form-row">
+        <label>Token mode</label>
+        <div class="segmented" role="tablist" aria-label="Token mode">
+          <input type="radio" id="tokenModeServer" name="tokenMode" value="server" checked />
+          <label for="tokenModeServer">Server</label>
+          <input type="radio" id="tokenModeManual" name="tokenMode" value="manual" />
+          <label for="tokenModeManual">Manual</label>
+        </div>
+      </div>
+      <div class="form-row" id="serverOriginRow" style="display:none">
         <label for="serverOrigin">Token server</label>
         <input id="serverOrigin" type="url" value="http://localhost:4000" />
         <span class="minor">/v1/rtc/token</span>
       </div>
-      <div class="row">
+      <div class="form-row">
         <label for="channel">Channel</label>
         <select id="channel" style="min-width:260px"></select>
       </div>
@@ -119,10 +167,21 @@
         <button id="createLiveBtn" type="button">Create Live</button>
         <span id="createLiveStatus" class="minor"></span>
       </div>
-      <div class="row">
+      <div class="form-row">
+        <label>UID mode</label>
+        <div class="segmented" role="tablist" aria-label="UID mode">
+          <input type="radio" id="uidModeAuto" name="uidMode" value="auto" checked />
+          <label for="uidModeAuto">Auto</label>
+          <input type="radio" id="uidModeManual" name="uidMode" value="manual" />
+          <label for="uidModeManual">Custom</label>
+        </div>
+      </div>
+      <div class="form-row" id="uidRow">
         <label for="uid">UID</label>
-        <input id="uid" type="text" placeholder="Unique per channel (auto if empty)" />
-        <span class="minor">Use a unique ID per client.</span>
+        <div>
+          <input id="uid" type="text" placeholder="Unique per channel (auto if empty)" />
+          <div class="minor">Use a unique ID per client.</div>
+        </div>
       </div>
       <div class="row">
         <label>Role</label>
@@ -130,13 +189,13 @@
         <label><input id="roleAudience" type="radio" name="role" value="audience" disabled checked /> Audience</label>
         <span class="minor">(set by login)</span>
       </div>
-      <details>
+      <details id="manualTokenDetails">
         <summary>Manual token (optional)</summary>
-        <div class="row">
+        <div class="form-row">
           <label for="appId">App ID</label>
           <input id="appId" type="text" placeholder="If using manual token" />
         </div>
-        <div class="row">
+        <div class="form-row">
           <label for="token">Token</label>
           <input id="token" type="text" placeholder="Paste a temp token to skip server" />
         </div>
@@ -190,45 +249,47 @@
       </fieldset>
     </div>
 
-    <fieldset>
-      <legend>Preview (Local)</legend>
-      <video id="localVideo" class="video" autoplay playsinline muted style="transform: scaleX(-1);"></video>
-    </fieldset>
+      <fieldset>
+        <legend>Preview (Local)</legend>
+        <div id="localWrap" class="local-wrap">
+          <video id="localVideo" class="video" autoplay playsinline muted style="transform: scaleX(-1);"></video>
+        </div>
+      </fieldset>
 
     <fieldset>
       <legend>Live Backend (FastAPI) – Presence & Duration</legend>
-      <div class="kpi-row" style="margin:8px 12px 0 12px">
-        <span id="liveBadge" class="pill off" title="WebSocket status">LIVE</span>
-        <span class="kpi" title="Current non-vendor viewers">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-          <strong id="viewerCountLabel">0</strong>
-        </span>
-        <span class="kpi" title="Unique viewers this session">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="0.01"/></svg>
-          <strong id="viewsTotalLabel">0</strong>
-        </span>
-        <span class="kpi" title="Elapsed live duration"><strong id="liveDurationLabel">00:00:00</strong></span>
-        <span class="spacer"></span>
-      </div>
-      <div class="row" style="padding:8px 12px 0 12px">
+      <!-- KPI row moved to Remote Video panel -->
+      <div class="form-row" style="padding:8px 12px 0 12px">
         <label for="backendOrigin">Backend origin</label>
-        <input id="backendOrigin" type="url" value="https://192.168.102.133:8000" />
+        <input id="backendOrigin" type="url" value="https://172.20.10.3:8000" />
       </div>
-      <div class="row" style="padding:0 12px">
+      <div class="form-row" style="padding:0 12px">
         <label for="liveSessionId">Session ID</label>
         <select id="liveSessionId" style="min-width:260px"></select>
       </div>
       <!-- Auth controls removed here; use the top "Account (Auth)" section. JWT from login is used automatically. -->
-      <div class="row" style="padding:0 12px 12px 12px">
-        <button id="connectLiveBtn" type="button">Connect Live WS</button>
-        <button id="disconnectLiveBtn" type="button" disabled>Disconnect</button>
-        <button id="endLiveBtn" type="button" style="display:none">End Live (vendor)</button>
-      </div>
+      <!-- Buttons removed: WS connects on Join; Leave ends vendor live and disconnects WS. -->
     </fieldset>
 
     <fieldset>
       <legend>Remote Video</legend>
-      <div id="remoteVideos" class="remote-grid"></div>
+      <div id="remoteWrap" class="remote-wrap">
+        <div id="remoteVideos" class="remote-grid"></div>
+        <div id="liveOverlay" class="live-overlay">
+          <div class="kpi-row">
+            <span id="liveBadge" class="pill off" title="WebSocket status">LIVE</span>
+            <span class="kpi" title="Current non-vendor viewers">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <strong id="viewerCountLabel">0</strong>
+            </span>
+            <span class="kpi" title="Unique viewers this session">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="0.01"/></svg>
+              <strong id="viewsTotalLabel">0</strong>
+            </span>
+            <span class="kpi" title="Elapsed live duration"><strong id="liveDurationLabel">00:00:00</strong></span>
+          </div>
+        </div>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -259,6 +320,27 @@
         logEl.scrollTop = logEl.scrollHeight;
       }
 
+      // Resolve token server origin without exposing it in UI
+      function getTokenServerOrigin() {
+        try {
+          // 1) Global override
+          if (window.TOKEN_SERVER_ORIGIN) return String(window.TOKEN_SERVER_ORIGIN);
+        } catch (_) {}
+        try {
+          // 2) Meta tag <meta name="token-server" content="https://api.example.com">
+          const m = document.querySelector('meta[name="token-server"][content]');
+          if (m && m.getAttribute('content')) return m.getAttribute('content');
+        } catch (_) {}
+        try {
+          // 3) Hidden input (kept for dev)
+          const v = (document.getElementById('serverOrigin')?.value || '').trim();
+          if (v) return v;
+        } catch (_) {}
+        // 4) Fallbacks: same origin under /demo, otherwise localhost dev server
+        try { if (location.pathname.startsWith('/demo')) return location.origin; } catch (_) {}
+        return 'http://localhost:4000';
+      }
+
       // Surface runtime errors in the on-page log for easier debugging
       window.addEventListener('error', (e) => {
         try { log('Runtime error:', e.message); } catch (_) {}
@@ -267,6 +349,41 @@
         try { const msg = (e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection'; log(msg); } catch (_) {}
       });
       log('Demo script loaded');
+      // Toggle helpers (token mode: server/manual, uid mode: auto/custom)
+      function tokenModeIsServer() {
+        try { return (document.querySelector('input[name="tokenMode"]:checked')?.value || 'server') === 'server'; } catch (_) { return true; }
+      }
+      function syncTokenServerUi() {
+        try {
+          const on = tokenModeIsServer();
+          const row = document.getElementById('serverOriginRow');
+          // Always keep server URL hidden from users
+          if (row) row.style.display = 'none';
+          const manual = document.getElementById('manualTokenDetails');
+          if (manual) { manual.style.display = on ? 'none' : ''; manual.open = !on; }
+        } catch (_) {}
+      }
+      function uidModeIsAuto() {
+        try { return (document.querySelector('input[name="uidMode"]:checked')?.value || 'auto') === 'auto'; } catch (_) { return true; }
+      }
+      function syncUidUi() {
+        try {
+          const on = uidModeIsAuto();
+          const wrap = document.getElementById('uidRow');
+          const inp = document.getElementById('uid');
+          if (wrap) wrap.style.display = on ? 'none' : 'block';
+          if (inp) {
+            inp.disabled = on;
+            if (on) {
+              // Derive UID from logged-in user or generate a lightweight one
+              let v = '';
+              try { const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}'); v = st?.user?.id ? String(st.user.id) : ''; } catch (_) {}
+              if (!v) { const r = Math.random().toString(36).slice(2, 8); v = `user_${r}`; }
+              inp.value = v;
+            }
+          }
+        } catch (_) {}
+      }
       // Hydrate login/JWT fields from saved state so users don't paste tokens
       function updateJwtUi() {
         try {
@@ -283,6 +400,16 @@
           }
         } catch(_) {}
       }
+      function toggleRegisterVisibility() {
+        try {
+          const det = document.getElementById('registerDetails');
+          if (!det) return;
+          const hasLogin = !!(window.demoJwt && window.demoJwt.trim());
+          // Always visible; just collapse when logged in
+          det.style.display = '';
+          if (hasLogin) det.open = false;
+        } catch(_) {}
+      }
       (function hydrateLoginFromStorage(){
         try {
           const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
@@ -295,6 +422,8 @@
             if (status && st.user) { status.textContent = `Logged in as ${st.user.name || 'user'}`; status.className = 'badge ok'; }
           }
           updateJwtUi();
+          toggleRegisterVisibility();
+          toggleRegisterVisibility();
         } catch(_) { /* noop */ }
       })();
       // Secure context check (getUserMedia requires HTTPS except on localhost)
@@ -391,6 +520,13 @@
           }
         } catch (_) { /* noop */ }
       })();
+      // Initialize toggle-controlled UI
+      try {
+        syncTokenServerUi();
+        syncUidUi();
+        document.querySelectorAll('input[name="tokenMode"]').forEach(el => el.addEventListener('change', syncTokenServerUi));
+        document.querySelectorAll('input[name="uidMode"]').forEach(el => el.addEventListener('change', syncUidUi));
+      } catch (_) {}
 
       // Ensure UID has a unique default if empty
       (function ensureDefaultUid() {
@@ -411,6 +547,8 @@
       let localAudioTrack;
       let localVideoTrack;
       let joined = false;
+      let currentChannelName = '';
+      let suppressChannelChange = false;
       // Hydrate logged-in user and lock role selection
       try {
         const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
@@ -463,13 +601,55 @@
           }
           host.disabled = true; aud.disabled = true;
         } catch (_) {}
+        try { placeLiveOverlay(); } catch(_) {}
       }
 
       function updateRemoteState() {
         $("remoteCount").textContent = String(remoteUsers.size);
+        try {
+          const grid = document.getElementById('remoteVideos');
+          if (grid) {
+            if (remoteUsers.size === 1) grid.classList.add('single');
+            else grid.classList.remove('single');
+          }
+        } catch(_) {}
         const first = remoteUsers.values().next().value;
         currentRemoteAudioTrack = first ? first.audioTrack : null;
         $("remoteVol").disabled = !currentRemoteAudioTrack;
+      }
+
+      async function promptSwitchIfJoined(newChannel) {
+        try {
+          if (!joined) return;
+          const target = String(newChannel || '').trim();
+          if (!target || target === currentChannelName) return;
+          const ok = confirm(`Switch from "${currentChannelName}" to "${target}"?`);
+          if (!ok) {
+            suppressChannelChange = true;
+            try {
+              const ch = document.getElementById('channel');
+              const si = document.getElementById('liveSessionId');
+              if (ch) ch.value = currentChannelName;
+              if (si) si.value = currentChannelName;
+            } finally { suppressChannelChange = false; }
+            return;
+          }
+          await leave();
+          await join();
+        } catch (_) {}
+      }
+
+      // Move the LIVE KPI overlay over local or remote area based on role
+      function placeLiveOverlay() {
+        try {
+          const overlay = document.getElementById('liveOverlay');
+          if (!overlay) return;
+          const targetId = (getRole() === 'host') ? 'localWrap' : 'remoteWrap';
+          const target = document.getElementById(targetId);
+          if (target && overlay.parentElement !== target) {
+            target.appendChild(overlay);
+          }
+        } catch (_) {}
       }
 
       // Helpers for backend origin, session id, and vendor end capability
@@ -592,8 +772,14 @@
       (function syncChannelAndSession() {
         const ch = document.getElementById('channel');
         const si = document.getElementById('liveSessionId');
-        if (ch) ch.addEventListener('change', () => { if (si) si.value = ch.value; });
-        if (si) si.addEventListener('change', () => { if (ch) ch.value = si.value; });
+        if (ch) ch.addEventListener('change', async () => {
+          if (si) si.value = ch.value;
+          if (!suppressChannelChange) await promptSwitchIfJoined(ch.value);
+        });
+        if (si) si.addEventListener('change', async () => {
+          if (ch) ch.value = si.value;
+          if (!suppressChannelChange) await promptSwitchIfJoined(si.value);
+        });
       })();
 
       function getPreferredFacing() {
@@ -640,13 +826,14 @@
           const role = getRole();
           let appId, token, finalUid = uid;
 
-          const manualToken = $("token").value.trim();
-          if (manualToken) {
+          const useServer = tokenModeIsServer();
+          if (!useServer) {
+            const manualToken = $("token").value.trim();
             appId = $("appId").value.trim();
             token = manualToken;
             if (!appId || !token) throw new Error('Manual token requires App ID and Token');
           } else {
-            const serverOrigin = $("serverOrigin").value.trim() || 'http://localhost:4000';
+            const serverOrigin = getTokenServerOrigin();
             const t = await fetchRtcToken(serverOrigin, channel, role, uid);
             appId = t.appId; token = t.token; finalUid = String(t.uid ?? uid);
           }
@@ -654,6 +841,11 @@
           client = AgoraRTC.createClient({ mode: 'live', codec: 'vp8' });
           client.on('user-published', async (user, mediaType) => {
             log('user-published', user.uid, mediaType);
+            // Avoid showing our own stream in the Remote grid (especially for vendor/host)
+            try {
+              const selfUid = String(finalUid);
+              if (String(user.uid) === selfUid) { log('skip self remote render'); return; }
+            } catch(_) {}
             await client.subscribe(user, mediaType);
             log('subscribed', user.uid, mediaType);
             if (!remoteUsers.has(user.uid)) remoteUsers.set(user.uid, {});
@@ -715,6 +907,7 @@
           client.setClientRole(role);
           await client.join(appId, channel, token || null, finalUid === '0' ? null : finalUid);
           log('Joined channel', channel, 'as', role, 'uid', finalUid);
+          try { currentChannelName = channel; } catch(_) {}
 
           if (role === 'host') {
             const facing = getPreferredFacing();
@@ -732,12 +925,28 @@
 
           // Connect RTM and subscribe to comments channel (same as RTC channel)
           try {
-            await ensureRtmConnected(channel, String(finalUid));
+            if (tokenModeIsServer()) {
+              await ensureRtmConnected(channel, String(finalUid));
+            } else {
+              log('RTM skipped: token server disabled');
+            }
           } catch (err) {
             log('RTM error:', err.message || err);
           }
 
+          // Auto-connect Live WS (presence/duration) if backend + JWT are ready
+          try {
+            const origin = getBackendOrigin();
+            const sid = resolveSessionId();
+            const jwt = (window.demoJwt || '').trim();
+            if (origin && (sid || channel) && jwt) {
+              connectLiveWs();
+            }
+          } catch (_) {}
+
           setUiJoined(true);
+          // Ensure KPI overlay is placed relative to role (host → local preview)
+          try { placeLiveOverlay(); } catch(_) {}
         } catch (e) {
           log('Join error:', e.message || e);
           alert(e.message || e);
@@ -763,6 +972,12 @@
           updateRemoteState();
           setUiJoined(false);
           log('Left channel');
+          try { currentChannelName = ''; } catch(_) {}
+          // Also disconnect presence/duration WS
+          try {
+            if (liveWs && liveWs.readyState === 1) { liveWs.close(1000, 'leave'); }
+            liveWs = null; stopTicker(); setLiveUi(false);
+          } catch (_) {}
           // If this user is the vendor/host, try to end the live session on backend
           try {
             if (isVendorUser()) {
@@ -854,7 +1069,7 @@
         }
         const rtmChannel = rtmSafeChannel(channel);
         if (rtm && rtmChannelName === rtmChannel) { return rtm; }
-        const origin = ($("serverOrigin").value.trim() || location.origin).replace(/\/$/, '');
+        const origin = getTokenServerOrigin().replace(/\/$/, '');
         const r = await fetch(`${origin}/v1/rtm/token?uid=${encodeURIComponent(uid)}`);
         if (!r.ok) throw new Error('RTM token fetch failed');
         const { appId: rtmAppId, token: rtmToken } = await r.json();
@@ -1039,18 +1254,12 @@
         try { if (liveWs && liveWs.readyState === 1) liveWs.close(1000, 'client close'); } catch(_) {}
         liveWs = null; stopTicker(); setLiveUi(false);
       }
-      document.getElementById('connectLiveBtn').addEventListener('click', connectLiveWs);
-      document.getElementById('disconnectLiveBtn').addEventListener('click', disconnectLiveWs);
-      document.getElementById('endLiveBtn').addEventListener('click', async () => {
-        try {
-          if (!canEndNow()) { log('Not allowed to end'); return; }
-          const origin = getBackendOrigin();
-          const sid = resolveSessionId();
-          const jwt = (window.demoJwt || '').trim();
-          const r = await fetch(`${origin}/live/sessions/${encodeURIComponent(sid)}/end`, { method:'POST', headers: { 'Authorization': `Bearer ${jwt}` }});
-          log('End live:', r.status);
-        } catch (e) { log('End live error', e?.message||e); }
-      });
+      // Auto cleanup on page unload
+      try {
+        window.addEventListener('beforeunload', () => {
+          try { if (liveWs && liveWs.readyState === 1) liveWs.close(1000, 'unload'); } catch(_) {}
+        });
+      } catch(_) {}
       // Keep the End Live button visibility fresh
       try {
         document.getElementById('channel').addEventListener('input', updateEndButton);
@@ -1123,6 +1332,7 @@ async function registerBackend() {
     });
     if (!r.ok) { status.textContent = 'Register failed'; status.className = 'badge error'; return; }
     await loginBackend();
+    try { const det = document.getElementById('registerDetails'); if (det) det.open = false; } catch(_) {}
   } catch (_) { try { document.getElementById('loginStatus').textContent = 'Register error'; } catch(_) {} }
 }
 function logoutBackend() {
@@ -1133,7 +1343,9 @@ function logoutBackend() {
     const status = document.getElementById('loginStatus');
     if (status) { status.textContent = 'Logged out'; status.className = 'minor'; }
     updateJwtUi();
+    toggleRegisterVisibility();
     applyRoleFromLogin();
+    try { placeLiveOverlay(); } catch(_) {}
     updateEndButton();
   } catch (_) {}
 }

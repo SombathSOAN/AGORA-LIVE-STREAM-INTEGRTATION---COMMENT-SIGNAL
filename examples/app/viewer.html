@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Viewer</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
-      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
+      label { display: inline-grid; grid-template-columns: 140px 1fr; align-items: center; gap: 8px; }
+      @media (max-width: 560px) { label { grid-template-columns: 1fr; } }
       .muted { color: #666; }
       .ok { color: #0a0; }
       .err { color: #c00; }
