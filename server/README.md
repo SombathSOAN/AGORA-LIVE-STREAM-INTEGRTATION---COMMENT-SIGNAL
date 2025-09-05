@@ -76,10 +76,12 @@ Notes
 See also
 - `docs/agora-media-and-account.md`: Volume controls (local/remote), mute/unmute, and Agora account setup (App ID, Certificate, tokens).
 
-Demo UI
-- The server also serves a minimal web demo at `http://localhost:4000/demo`.
+Demo UIs
+- Minimal web demo at `http://localhost:4000/demo`.
   - Join as host/audience, toggle mute, and adjust local/remote volumes.
-  - The route sets a relaxed CSP to allow the Agora CDN script.
+  - Relaxed CSP allows Agora CDN scripts.
+- App demo (vendor/user flows) at `http://localhost:4000/app`.
+  - Simple auth, create live, join/watch pages without exposing tokens in UI.
 
 LAN Testing (share with others on Wi‑Fi)
 - Easiest: serve the demo from the same origin and share your LAN IP.

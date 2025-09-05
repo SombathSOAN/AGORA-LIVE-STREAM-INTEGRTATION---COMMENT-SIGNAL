@@ -82,6 +82,27 @@
     <p class="minor">Use with the token server from <code>server/</code> (default http://localhost:4000).</p>
 
     <fieldset>
+      <legend>Account (Auth)</legend>
+      <div class="row">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="text" placeholder="you@example.com" />
+        <label for="loginPassword" style="margin-left:8px">Password</label>
+        <input id="loginPassword" type="password" placeholder="password" />
+        <button id="loginBackendBtn" type="button" style="margin-left:8px">Login</button>
+        <button id="logoutBackendBtn" type="button" style="margin-left:8px">Logout</button>
+        <span id="loginStatus" class="minor" style="margin-left:8px"></span>
+      </div>
+      <div class="row">
+        <label style="min-width:160px">Register (optional)</label>
+        <label style="margin-left:8px"><input type="radio" name="regRole" id="regRoleUser" value="user" checked /> user</label>
+        <label style="margin-left:8px"><input type="radio" name="regRole" id="regRoleVendor" value="vendor" /> vendor</label>
+        <label style="margin-left:8px">Name</label>
+        <input id="registerName" type="text" placeholder="display name" />
+        <button id="registerBackendBtn" type="button" style="margin-left:8px">Register</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
       <legend>Join Settings</legend>
       <div class="row">
         <label for="serverOrigin">Token server</label>
@@ -90,7 +111,13 @@
       </div>
       <div class="row">
         <label for="channel">Channel</label>
-        <input id="channel" type="text" value="demo" />
+        <select id="channel" style="min-width:260px"></select>
+      </div>
+      <div class="row" id="vendorCreateRow" style="display:none">
+        <label for="liveTitle">Title</label>
+        <input id="liveTitle" type="text" placeholder="My Live" />
+        <button id="createLiveBtn" type="button">Create Live</button>
+        <span id="createLiveStatus" class="minor"></span>
       </div>
       <div class="row">
         <label for="uid">UID</label>
@@ -99,8 +126,9 @@
       </div>
       <div class="row">
         <label>Role</label>
-        <label><input type="radio" name="role" value="host" checked /> Host</label>
-        <label><input type="radio" name="role" value="audience" /> Audience</label>
+        <label><input id="roleHost" type="radio" name="role" value="host" disabled /> Host</label>
+        <label><input id="roleAudience" type="radio" name="role" value="audience" disabled checked /> Audience</label>
+        <span class="minor">(set by login)</span>
       </div>
       <details>
         <summary>Manual token (optional)</summary>
@@ -184,19 +212,17 @@
       </div>
       <div class="row" style="padding:8px 12px 0 12px">
         <label for="backendOrigin">Backend origin</label>
-        <input id="backendOrigin" type="url" value="http://localhost:8000" />
+        <input id="backendOrigin" type="url" value="https://192.168.102.133:8000" />
       </div>
       <div class="row" style="padding:0 12px">
         <label for="liveSessionId">Session ID</label>
-        <input id="liveSessionId" type="text" placeholder="sess_xxx from /live/sessions or /active" />
+        <select id="liveSessionId" style="min-width:260px"></select>
       </div>
-      <div class="row" style="padding:0 12px 8px 12px">
-        <label for="jwtToken">JWT</label>
-        <input id="jwtToken" type="text" placeholder="Paste Bearer JWT (from /auth/login)" />
-      </div>
+      <!-- Auth controls removed here; use the top "Account (Auth)" section. JWT from login is used automatically. -->
       <div class="row" style="padding:0 12px 12px 12px">
         <button id="connectLiveBtn" type="button">Connect Live WS</button>
         <button id="disconnectLiveBtn" type="button" disabled>Disconnect</button>
+        <button id="endLiveBtn" type="button" style="display:none">End Live (vendor)</button>
       </div>
     </fieldset>
 
@@ -241,6 +267,36 @@
         try { const msg = (e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection'; log(msg); } catch (_) {}
       });
       log('Demo script loaded');
+      // Hydrate login/JWT fields from saved state so users don't paste tokens
+      function updateJwtUi() {
+        try {
+          const jwtEl = document.getElementById('jwtToken');
+          const hasLogin = !!(window.demoJwt && window.demoJwt.trim());
+          if (!jwtEl) return;
+          if (hasLogin) {
+            if (!jwtEl.value) jwtEl.value = window.demoJwt; // reflect value
+            jwtEl.disabled = true;
+            jwtEl.placeholder = 'Using logged-in token';
+          } else {
+            jwtEl.disabled = false;
+            jwtEl.placeholder = 'Paste Bearer JWT (optional)';
+          }
+        } catch(_) {}
+      }
+      (function hydrateLoginFromStorage(){
+        try {
+          const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+          if (st.lastEmail && document.getElementById('loginEmail')) {
+            document.getElementById('loginEmail').value = st.lastEmail;
+          }
+          if (st.jwt) {
+            window.demoJwt = st.jwt;
+            const status = document.getElementById('loginStatus');
+            if (status && st.user) { status.textContent = `Logged in as ${st.user.name || 'user'}`; status.className = 'badge ok'; }
+          }
+          updateJwtUi();
+        } catch(_) { /* noop */ }
+      })();
       // Secure context check (getUserMedia requires HTTPS except on localhost)
       (function enforceSecureContext(){
         try {
@@ -339,7 +395,13 @@
       // Ensure UID has a unique default if empty
       (function ensureDefaultUid() {
         const uidEl = $("uid");
-        if (uidEl && !uidEl.value) {
+        if (!uidEl) return;
+        try {
+          const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+          const uidFromUser = st?.user?.id ? String(st.user.id) : '';
+          if (uidFromUser) { uidEl.value = uidFromUser; return; }
+        } catch (_) {}
+        if (!uidEl.value) {
           const rand = Math.random().toString(36).slice(2, 8);
           uidEl.value = `user_${rand}`;
         }
@@ -349,6 +411,12 @@
       let localAudioTrack;
       let localVideoTrack;
       let joined = false;
+      // Hydrate logged-in user and lock role selection
+      try {
+        const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        if (st && st.user) { window.demoUser = st.user; }
+      } catch (_) {}
+      applyRoleFromLogin();
       const remoteUsers = new Map(); // uid -> { audioTrack, videoTrack }
       let currentRemoteAudioTrack = null;
       let rtm; // RTM client
@@ -365,6 +433,11 @@
       }
 
       function getRole() {
+        try {
+          if (window.demoUser && window.demoUser.role) {
+            return window.demoUser.role === 'vendor' ? 'host' : 'audience';
+          }
+        } catch (_) {}
         const el = document.querySelector('input[name="role"]:checked');
         return el ? el.value : 'audience';
       }
@@ -375,11 +448,76 @@
         $("leaveBtn").disabled = !state;
       }
 
+      // Reflect role based on logged-in user: vendor → host, user → audience
+      function applyRoleFromLogin() {
+        try {
+          const host = document.getElementById('roleHost');
+          const aud = document.getElementById('roleAudience');
+          if (!host || !aud) return;
+          if (window.demoUser && window.demoUser.role) {
+            const isVendor = window.demoUser.role === 'vendor';
+            host.checked = !!isVendor; aud.checked = !isVendor;
+            // Toggle vendor-only controls
+            const row = document.getElementById('vendorCreateRow');
+            if (row) row.style.display = isVendor ? 'flex' : 'none';
+          }
+          host.disabled = true; aud.disabled = true;
+        } catch (_) {}
+      }
+
       function updateRemoteState() {
         $("remoteCount").textContent = String(remoteUsers.size);
         const first = remoteUsers.values().next().value;
         currentRemoteAudioTrack = first ? first.audioTrack : null;
         $("remoteVol").disabled = !currentRemoteAudioTrack;
+      }
+
+      // Helpers for backend origin, session id, and vendor end capability
+      function getBackendOrigin() {
+        try { return (document.getElementById('backendOrigin').value || '').replace(/\/$/, ''); } catch (_) { return ''; }
+      }
+      function resolveSessionId() {
+        try {
+          const si = (document.getElementById('liveSessionId').value || '').trim();
+          if (si) return si;
+          return (document.getElementById('channel').value || '').trim();
+        } catch (_) { return ''; }
+      }
+      function isVendorUser() {
+        try { return (window.demoUser && window.demoUser.role === 'vendor') || getRole()==='host'; } catch (_) { return false; }
+      }
+      function canEndNow() { return !!(isVendorUser() && getBackendOrigin() && resolveSessionId()); }
+      function updateEndButton() {
+        const b = document.getElementById('endLiveBtn'); if (!b) return;
+        b.style.display = canEndNow() ? 'inline-block' : 'none';
+      }
+
+      // Create live via FastAPI (vendor only)
+      async function createLiveViaApi() {
+        const statusEl = document.getElementById('createLiveStatus');
+        try {
+          if (!isVendorUser()) { if (statusEl) statusEl.textContent = 'Login as vendor'; return; }
+          const origin = getBackendOrigin();
+          const jwt = (window.demoJwt || '').trim();
+          const title = (document.getElementById('liveTitle').value || '').trim() || 'My Live';
+          if (!origin || !jwt) { if (statusEl) statusEl.textContent = 'Missing backend origin or login'; return; }
+          if (statusEl) { statusEl.textContent = 'Creating…'; }
+          const r = await fetch(`${origin}/live/sessions`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${jwt}` }, body: JSON.stringify({ title })
+          });
+          if (!r.ok) { if (statusEl) statusEl.textContent = 'Create failed'; return; }
+          const data = await r.json();
+          const sid = data.session_id;
+          // Prefill fields and lists; prefer this session
+          try {
+            const ch = document.getElementById('channel'); const si = document.getElementById('liveSessionId');
+            if (ch) ch.value = sid; if (si) si.value = sid; updateEndButton();
+          } catch (_) {}
+          await refreshActiveSelects();
+          if (statusEl) { statusEl.textContent = 'Live created'; }
+        } catch (e) {
+          if (statusEl) statusEl.textContent = 'Error creating live';
+        }
       }
 
       async function refreshCameraList() {
@@ -399,6 +537,64 @@
           if (old) sel.value = old;
         } catch (_) {}
       }
+
+      // ------------------------------
+      // Active sessions list → populate selects for Channel and Session ID
+      // ------------------------------
+      async function fetchActiveSessions() {
+        try {
+          const origin = (document.getElementById('backendOrigin').value || '').replace(/\/$/, '');
+          if (!origin) return [];
+          const res = await fetch(`${origin}/live/sessions/active`);
+          if (!res.ok) return [];
+          const data = await res.json();
+          return Array.isArray(data.items) ? data.items : [];
+        } catch (_) { return []; }
+      }
+      function populateSelects(items) {
+        try {
+          const chSel = document.getElementById('channel');
+          const siSel = document.getElementById('liveSessionId');
+          if (!chSel || !siSel) return;
+          const selCh = chSel.value;
+          const selSi = siSel.value;
+          const options = items.map(it => ({ value: it.session_id, label: `${it.title} — ${it.vendor?.name||''}` }));
+          function render(sel, selectedVal) {
+            sel.innerHTML = '';
+            const ph = document.createElement('option'); ph.value = ''; ph.textContent = 'Select session'; sel.appendChild(ph);
+            for (const o of options) {
+              const opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label; sel.appendChild(opt);
+            }
+            if (selectedVal && options.some(o => o.value === selectedVal)) sel.value = selectedVal;
+          }
+          render(chSel, selCh);
+          render(siSel, selSi);
+        } catch (_) {}
+      }
+      async function refreshActiveSelects() {
+        const items = await fetchActiveSessions();
+        populateSelects(items);
+        // If logged in as vendor, prefer prefill with their own session
+        try {
+          if (window.demoUser?.role === 'vendor') {
+            const mine = items.find(it => String(it.vendor?.id) === String(window.demoUser?.id));
+            if (mine) {
+              const sid = mine.session_id;
+              const ch = document.getElementById('channel');
+              const si = document.getElementById('liveSessionId');
+              if (ch) ch.value = sid;
+              if (si) si.value = sid;
+            }
+          }
+        } catch (_) {}
+      }
+      // keep in sync: channel ↔ session id (selects)
+      (function syncChannelAndSession() {
+        const ch = document.getElementById('channel');
+        const si = document.getElementById('liveSessionId');
+        if (ch) ch.addEventListener('change', () => { if (si) si.value = ch.value; });
+        if (si) si.addEventListener('change', () => { if (ch) ch.value = si.value; });
+      })();
 
       function getPreferredFacing() {
         const el = document.querySelector('input[name="camFacing"]:checked');
@@ -567,6 +763,20 @@
           updateRemoteState();
           setUiJoined(false);
           log('Left channel');
+          // If this user is the vendor/host, try to end the live session on backend
+          try {
+            if (isVendorUser()) {
+              const origin = getBackendOrigin();
+              const sid = resolveSessionId();
+              const jwt = (window.demoJwt || '').trim();
+              if (origin && sid && jwt) {
+                const res = await fetch(`${origin}/live/sessions/${encodeURIComponent(sid)}/end`, {
+                  method: 'POST', headers: { 'Authorization': `Bearer ${jwt}` }
+                });
+                log('End live result:', res.status);
+              }
+            }
+          } catch (_) {}
         } catch (e) {
           log('Leave error:', e.message || e);
         }
@@ -751,10 +961,14 @@
       function connectLiveWs() {
         try {
           const origin = (document.getElementById('backendOrigin').value || '').replace(/\/$/, '');
-          const sid = (document.getElementById('liveSessionId').value || '').trim();
-          const jwt = (document.getElementById('jwtToken').value || '').trim();
+          let sid = (document.getElementById('liveSessionId').value || '').trim();
+          if (!sid) { try { sid = (document.getElementById('channel').value || '').trim(); } catch(_) {} }
+          const jwtFromLogin = (window.demoJwt || '').trim();
+          const jwtRaw = ((document.getElementById('jwtToken') && document.getElementById('jwtToken').value) || '').trim();
+          // Prefer login token; otherwise accept raw token or 'Bearer ...'
+          const jwt = (jwtFromLogin || jwtRaw).replace(/^Bearer\s+/i, '');
           if (!origin || !sid || !jwt) {
-            alert('Please fill Backend origin, Session ID, and JWT');
+            alert('Please fill Backend origin, Session ID, and login (Account section)');
             return;
           }
           const url = `${origin.replace('http','ws')}/ws/live/${encodeURIComponent(sid)}?token=${encodeURIComponent(jwt)}`;
@@ -795,6 +1009,28 @@
               }
             } catch(_) {}
           };
+
+          // Fallback init: fetch session info via REST in case the WS snapshot is delayed
+          try {
+            const restUrl = `${origin}/live/sessions/${encodeURIComponent(sid)}`;
+            fetch(restUrl).then(r => r.ok ? r.json() : null).then((data) => {
+              if (!data) return;
+              if (typeof data.viewer_count === 'number') updateViewerCount(data.viewer_count);
+              if (typeof data.views_total === 'number') updateViewsTotal(data.views_total);
+              if (data.started_at) {
+                const startedMs = Date.parse(data.started_at);
+                const endedMs = data.ended_at ? Date.parse(data.ended_at) : null;
+                if (!Number.isNaN(startedMs)) {
+                  const nowMs = Date.now();
+                  const baseMs = endedMs ?? nowMs;
+                  const secs = Math.max(0, Math.floor((baseMs - startedMs) / 1000));
+                  liveDurationSeconds = secs;
+                  liveEnded = !!endedMs;
+                  startTicker();
+                }
+              }
+            }).catch(() => {});
+          } catch (_) { /* noop */ }
         } catch (e) {
           log('Live WS connect error:', e.message || e);
         }
@@ -805,6 +1041,105 @@
       }
       document.getElementById('connectLiveBtn').addEventListener('click', connectLiveWs);
       document.getElementById('disconnectLiveBtn').addEventListener('click', disconnectLiveWs);
+      document.getElementById('endLiveBtn').addEventListener('click', async () => {
+        try {
+          if (!canEndNow()) { log('Not allowed to end'); return; }
+          const origin = getBackendOrigin();
+          const sid = resolveSessionId();
+          const jwt = (window.demoJwt || '').trim();
+          const r = await fetch(`${origin}/live/sessions/${encodeURIComponent(sid)}/end`, { method:'POST', headers: { 'Authorization': `Bearer ${jwt}` }});
+          log('End live:', r.status);
+        } catch (e) { log('End live error', e?.message||e); }
+      });
+      // Keep the End Live button visibility fresh
+      try {
+        document.getElementById('channel').addEventListener('input', updateEndButton);
+        document.getElementById('liveSessionId').addEventListener('input', updateEndButton);
+        document.getElementById('backendOrigin').addEventListener('input', updateEndButton);
+      } catch(_) {}
+      // Populate active session lists initially and every 8s
+      try { refreshActiveSelects(); setInterval(refreshActiveSelects, 8000); } catch (_) {}
+      try { document.getElementById('backendOrigin').addEventListener('input', () => { refreshActiveSelects(); updateEndButton(); }); } catch (_) {}
+      try { document.getElementById('createLiveBtn').addEventListener('click', createLiveViaApi); } catch (_) {}
+
+      // ------------------------------
+      // Backend login helper (stores JWT for WS)
+      // ------------------------------
+      function saveDemoState(extras) {
+        try {
+          const key = 'streammeon_state';
+          const cur = JSON.parse(localStorage.getItem(key) || '{}');
+          localStorage.setItem(key, JSON.stringify({ ...cur, ...extras }));
+        } catch (_) {}
+      }
+async function loginBackend() {
+        try {
+          const origin = (document.getElementById('backendOrigin').value || '').replace(/\/$/, '');
+          const email = (document.getElementById('loginEmail').value || '').trim();
+          const password = document.getElementById('loginPassword').value || '';
+          const status = document.getElementById('loginStatus');
+          if (!origin || !email || !password) { status.textContent = 'Fill origin, email, password'; return; }
+          status.textContent = 'Logging in…';
+          const r = await fetch(`${origin}/auth/login`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
+          if (!r.ok) { status.textContent = 'Login failed'; status.className = 'badge error'; return; }
+          const data = await r.json();
+          window.demoJwt = data.access_token || '';
+          // Persist token + user + last email for auto-fill on next load
+          saveDemoState({ jwt: data.access_token || '', user: data.user || null, lastEmail: email });
+          // Reflect in UI (disable manual input since we’ll use the login token)
+          try { const jwtEl = document.getElementById('jwtToken'); if (jwtEl) { jwtEl.value = data.access_token || ''; } } catch(_) {}
+          status.textContent = `Logged in as ${data?.user?.name || email}`;
+          status.className = 'badge ok';
+          updateJwtUi();
+          // Apply UID and role from user
+          try {
+            if (data?.user?.id) { const uidEl = document.getElementById('uid'); if (uidEl) uidEl.value = String(data.user.id); }
+            window.demoUser = data.user || null;
+            applyRoleFromLogin();
+          } catch (_) {}
+          // Populate active sessions into datalists and prefill matching fields
+          await refreshActiveSelects();
+  updateEndButton();
+} catch (e) {
+  try { document.getElementById('loginStatus').textContent = 'Login error'; } catch (_) {}
+}
+}
+async function registerBackend() {
+  try {
+    const origin = (document.getElementById('backendOrigin').value || '').replace(/\/$/, '');
+    const email = (document.getElementById('loginEmail').value || '').trim();
+    const password = document.getElementById('loginPassword').value || '';
+    const name = (document.getElementById('registerName').value || '').trim() || email.split('@')[0];
+    const role = (document.getElementById('regRoleVendor')?.checked) ? 'vendor' : 'user';
+    const status = document.getElementById('loginStatus');
+    if (!origin || !email || !password) { status.textContent = 'Fill origin, email, password'; return; }
+    status.textContent = 'Registering…';
+    const r = await fetch(`${origin}/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name, role })
+    });
+    if (!r.ok) { status.textContent = 'Register failed'; status.className = 'badge error'; return; }
+    await loginBackend();
+  } catch (_) { try { document.getElementById('loginStatus').textContent = 'Register error'; } catch(_) {} }
+}
+function logoutBackend() {
+  try {
+    window.demoJwt = '';
+    window.demoUser = null;
+    saveDemoState({ jwt: '', user: null });
+    const status = document.getElementById('loginStatus');
+    if (status) { status.textContent = 'Logged out'; status.className = 'minor'; }
+    updateJwtUi();
+    applyRoleFromLogin();
+    updateEndButton();
+  } catch (_) {}
+}
+document.getElementById('loginBackendBtn').addEventListener('click', loginBackend);
+document.getElementById('registerBackendBtn').addEventListener('click', registerBackend);
+document.getElementById('logoutBackendBtn').addEventListener('click', logoutBackend);
     </script>
   </body>
   </html>

@@ -25,13 +25,22 @@ app.use(express.json());
 // CORS
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
 const allowedOrigins = allowedOriginsEnv.split(',').map(s => s.trim()).filter(Boolean);
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // allow non-browser clients
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
+
+// Allow same-origin by default (useful when serving /demo) and any origins listed in ALLOWED_ORIGINS.
+// Use a dynamic delegate so we can compare with the current request's host/protocol.
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+  // Always allow non-browser or same-origin requests
+  let sameOrigin = false;
+  try {
+    const selfOrigin = `${req.protocol}://${req.get('host')}`; // e.g. https://127.0.0.1:4000
+    sameOrigin = !!origin && origin === selfOrigin;
+  } catch (_) { /* noop */ }
+
+  const allowAll = allowedOrigins.includes('*');
+  const isListed = !!origin && allowedOrigins.includes(origin);
+  const allow = !origin || sameOrigin || allowAll || isListed;
+  callback(null, { origin: allow, credentials: true });
 }));
 
 // Serve demo UI (optional)
@@ -103,6 +112,23 @@ try {
 } catch (e) {
   // eslint-disable-next-line no-console
   console.warn('Demo not served:', e?.message || e);
+}
+
+// Serve sample App UI (vendor/user flows)
+try {
+  const appDir = path.resolve(__dirname, '../../examples/app');
+  const appCsp = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; connect-src 'self' http: https: ws: wss:; media-src 'self' blob: data:;";
+  const appCspMw = (_req, res, next) => { res.setHeader('Content-Security-Policy', appCsp); next(); };
+  app.use('/app', appCspMw, express.static(appDir));
+  app.get('/app', appCspMw, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(appDir, 'index.html'));
+  });
+  // eslint-disable-next-line no-console
+  console.log(`Serving app from ${appDir} at /app`);
+} catch (e) {
+  // eslint-disable-next-line no-console
+  console.warn('App UI not served:', e?.message || e);
 }
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
@@ -234,10 +260,11 @@ app.get('/v1/rtm/token', (req, res) => {
 });
 
 // Root
+const pkg = (() => { try { return require('../package.json'); } catch (_) { return { name: 'agora-backend', version: '0.0.0' }; } })();
 app.get('/', (_req, res) => {
   res.json({
-    name: 'Agora Token Server',
-    version: '0.1.0',
+    name: pkg.name || 'Agora Token Server',
+    version: pkg.version || '0.1.0',
     endpoints: {
       health: '/v1/health',
       rtc: '/v1/rtc/token?channelName=demo&role=host&uid=alice&expire=3600',
@@ -302,10 +329,14 @@ function printAccessUrls(secure) {
   console.log('Access URLs:');
   // eslint-disable-next-line no-console
   console.log(`  Local:   ${scheme}://localhost:${PORT}/demo`);
+  // eslint-disable-next-line no-console
+  console.log(`  Local:   ${scheme}://localhost:${PORT}/app`);
   if (ips.length) {
     for (const ip of ips) {
       // eslint-disable-next-line no-console
       console.log(`  Network: ${scheme}://${ip}:${PORT}/demo`);
+      // eslint-disable-next-line no-console
+      console.log(`  Network: ${scheme}://${ip}:${PORT}/app`);
     }
   } else {
     // eslint-disable-next-line no-console

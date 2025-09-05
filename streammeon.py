@@ -212,7 +212,8 @@ class RegisterIn(BaseModel):
     email: EmailStr
     name: str
     password: str
-    role: str  # "vendor" or "user"
+    # Optional in request; defaults to 'user' when omitted
+    role: str = "user"  # "vendor" or "user"
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -253,7 +254,9 @@ def health():
 # ----------------------------
 @app.post("/auth/register")
 def register(body: RegisterIn):
-    if body.role not in ("vendor", "user"):
+    # Accept missing/blank role by defaulting to 'user'; validate strictly otherwise
+    role_val = (body.role or "user").strip().lower()
+    if role_val not in ("vendor", "user"):
         raise HTTPException(422, "role must be 'vendor' or 'user'")
     pw_hash = bcrypt.hash(body.password)
     # Prepare optional username/display_name depending on existing schema
@@ -297,7 +300,7 @@ def register(body: RegisterIn):
                 params['password_hash'] = pw_hash
             if 'role' in USERS_COLS:
                 columns.append('role')
-                params['role'] = body.role
+                params['role'] = role_val
             # Optional display_name
             if need_display:
                 columns.append('display_name')
@@ -328,8 +331,8 @@ def register(body: RegisterIn):
         except Exception as e:
             # Surface error in dev to help diagnose
             raise HTTPException(500, f"Failed to create user: {type(e).__name__}: {e}")
-    token = make_token(row[0], body.role, body.name)
-    return {"access_token": token, "token_type": "Bearer", "user": {"id": str(row[0]), "email": body.email, "name": body.name, "role": body.role}}
+    token = make_token(row[0], role_val, body.name)
+    return {"access_token": token, "token_type": "Bearer", "user": {"id": str(row[0]), "email": body.email, "name": body.name, "role": role_val}}
 
 @app.post("/auth/login")
 def login(body: LoginIn):

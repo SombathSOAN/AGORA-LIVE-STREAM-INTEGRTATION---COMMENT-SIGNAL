@@ -20,7 +20,7 @@
     <h2>Watch Live</h2>
 
     <div class="row">
-      <label>App Base <input id="apiBase" type="text" value="http://localhost:8000" /></label>
+      <label>App Base <input id="apiBase" type="text" value="https://192.168.102.133:8000" /></label>
       <label>Token Base <input id="tokBase" type="text" value="http://localhost:4000" /></label>
       <label>Agora App ID <input id="appId" type="text" placeholder="AGORA_APP_ID" /></label>
     </div>
@@ -50,9 +50,19 @@
     </div>
     <div id="chat"></div>
 
+    <!-- Load Agora SDKs (RTC as ESM; RTM as UMD global on v2.x for consistency) -->
     <script type="module">
       import AgoraRTC from "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/esm/index.js";
-      import AgoraRTM from "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@1.6.3/AgoraRTM.esm.browser.js";
+      // Ensure RTM v2.2.3 is present via UMD global. If not yet loaded, inject it.
+      async function ensureRtmV2() {
+        if (window.AgoraRTM) return window.AgoraRTM;
+        const src = "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js";
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script'); s.src = src; s.async = true; s.onload = resolve; s.onerror = () => reject(new Error('RTM load failed'));
+          document.head.appendChild(s);
+        });
+        return window.AgoraRTM;
+      }
 
       const $ = id => document.getElementById(id);
       const log = (w, t) => { const d = document.createElement('div'); d.textContent = `${w}: ${t}`; $('chat').appendChild(d); $('chat').scrollTop = $('chat').scrollHeight; };
@@ -122,18 +132,21 @@
           localCam.play('local');
         }
 
-        // RTM
+        // RTM (v2.2.3)
         const { token: rtmTok } = await getRtmToken(TOK, UID);
+        const AgoraRTM = await ensureRtmV2();
         clientRTM = await AgoraRTM.createInstance(APP);
         await clientRTM.login({ uid: UID, token: rtmTok });
         rtmChannel = clientRTM.createChannel(SID);
         await rtmChannel.join();
         rtmChannel.on('ChannelMessage', ({ text }, memberId) => log(memberId, text));
 
-        // Presence from backend
+        // Presence from backend (use API base, not page host)
         try {
-          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-          presence = new WebSocket(`${proto}://${location.host}/ws/live/${SID}?token=${encodeURIComponent(JWT.replace(/^Bearer\s+/i,''))}`);
+          const apiBase = $('apiBase').value.trim().replace(/\/$/, '');
+          const wsBase = apiBase.replace(/^http/i, 'ws');
+          const bareJwt = JWT.replace(/^Bearer\s+/i,'');
+          presence = new WebSocket(`${wsBase}/ws/live/${encodeURIComponent(SID)}?token=${encodeURIComponent(bareJwt)}`);
           presence.onmessage = (e) => {
             const m = JSON.parse(e.data);
             if (m.type === 'viewer_count') $('status').textContent = `Viewers: ${m.count}`;
@@ -191,4 +204,3 @@
     </script>
   </body>
   </html>
-

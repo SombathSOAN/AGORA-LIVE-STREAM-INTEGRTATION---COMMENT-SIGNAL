@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viewer</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      .muted { color: #666; }
+      .ok { color: #0a0; }
+      .err { color: #c00; }
+      .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
+      #chat { border: 1px solid #ddd; height: 180px; overflow: auto; padding: 6px; }
+      video, .remote { width: 480px; height: 270px; background: #000; }
+    </style>
+  </head>
+  <body>
+    <h1>Watch Live</h1>
+    <div class="card">
+      <div class="row">
+        <div><strong>Status:</strong> <span id="status" class="muted">Idle</span></div>
+        <div style="margin-left:16px"><strong>Viewers:</strong> <span id="viewers">0</span></div>
+        <div style="margin-left:16px"><strong>Duration:</strong> <span id="duration">00:00:00</span></div>
+        <div style="flex:1 1 auto"></div>
+        <button id="leave">Leave</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="videoHost" class="remote"></div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input id="msg" type="text" placeholder="Type a message" />
+        <button id="send">Send</button>
+      </div>
+      <div id="chat"></div>
+    </div>
+
+    <script type="module">
+      import AgoraRTC from "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/esm/index.js";
+      async function ensureRtmV2(){ if(window.AgoraRTM) return window.AgoraRTM; const src='https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js'; await new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.async=true; s.onload=res; s.onerror=()=>rej(new Error('RTM load failed')); document.head.appendChild(s); }); return window.AgoraRTM; }
+
+      const $ = (id) => document.getElementById(id);
+      const log = (who, text) => { const d=document.createElement('div'); d.textContent=`${who}: ${text}`; $('chat').appendChild(d); $('chat').scrollTop=$('chat').scrollHeight; };
+      function setStatus(t, cls='muted'){ const el=$('status'); el.textContent=t; el.className=cls; }
+      function fmtHMS(secs){ secs=Math.max(0,Math.floor(secs||0)); const h=String(Math.floor(secs/3600)).padStart(2,'0'); const m=String(Math.floor((secs%3600)/60)).padStart(2,'0'); const s=String(secs%60).padStart(2,'0'); return `${h}:${m}:${s}`; }
+
+      // State
+      let API='', TOK='', APP='', JWT='', USER=null;
+      let SID='', UID='';
+      let clientRTC=null, clientRTM=null, rtmChannel=null, presence=null;
+      let durationSecs=0, ticker=null;
+      const remoteUsers = new Map();
+
+      function startTicker(){ stopTicker(); $('duration').textContent = fmtHMS(durationSecs); ticker=setInterval(()=>{ durationSecs+=1; $('duration').textContent=fmtHMS(durationSecs); },1000);} 
+      function stopTicker(){ if(ticker){ clearInterval(ticker); ticker=null; } }
+
+      function loadState(){
+        const st = JSON.parse(localStorage.getItem('streammeon_state')||'{}');
+        API = (st.apiBase||'').trim(); TOK=(st.tokBase||'').trim(); APP=(st.appId||'').trim(); JWT=(st.jwt||'').trim(); USER=st.user||null;
+      }
+
+      function getSid(){ const u=new URL(location.href); return (u.searchParams.get('sid')||'').trim(); }
+
+      async function join(){
+        loadState(); SID=getSid();
+        if(!API || !TOK || !SID || !JWT){ setStatus('Missing app config or login (/app)', 'err'); return; }
+        UID = String((USER && USER.id) || `viewer_${Math.random().toString(36).slice(2,8)}`);
+
+        // RTC
+        const rtcRes = await fetch(`${TOK.replace(/\/$/,'')}/v1/rtc/token?` + new URLSearchParams({ channelName: SID, role: 'audience', uid: UID }));
+        if(!rtcRes.ok){ setStatus('RTC token failed', 'err'); return; }
+        const rtcJson = await rtcRes.json();
+        const token = rtcJson.token;
+        // Prefer server-provided App ID when not configured
+        if(!APP) APP = rtcJson.appId || APP;
+        clientRTC = AgoraRTC.createClient({ mode:'live', codec:'vp8' });
+        clientRTC.setClientRole('audience');
+        clientRTC.on('user-published', async (user, mediaType)=>{
+          await clientRTC.subscribe(user, mediaType);
+          if(!remoteUsers.has(user.uid)) remoteUsers.set(user.uid, {});
+          const entry = remoteUsers.get(user.uid);
+          if(mediaType==='video'){ entry.videoTrack=user.videoTrack; user.videoTrack.play('videoHost'); }
+          if(mediaType==='audio'){ entry.audioTrack=user.audioTrack; try{ user.audioTrack.play(); }catch(_){} }
+        });
+        clientRTC.on('user-unpublished', (user, mediaType)=>{
+          const entry=remoteUsers.get(user.uid); if(entry){ if(mediaType==='video' && entry.videoTrack){ try{ entry.videoTrack.stop(); }catch(_){} entry.videoTrack=null; } if(mediaType==='audio' && entry.audioTrack){ try{ entry.audioTrack.stop(); }catch(_){} entry.audioTrack=null; } if(!entry.audioTrack && !entry.videoTrack) remoteUsers.delete(user.uid); }
+        });
+        await clientRTC.join(APP, SID, token, UID);
+
+        // RTM
+        const AgoraRTM = await ensureRtmV2();
+        const rtmRes = await fetch(`${TOK.replace(/\/$/,'')}/v1/rtm/token?` + new URLSearchParams({ uid: UID }));
+        const rtmJson = await rtmRes.json();
+        clientRTM = await AgoraRTM.createInstance(APP);
+        await clientRTM.login({ uid: UID, token: rtmJson.token });
+        rtmChannel = clientRTM.createChannel(SID); await rtmChannel.join();
+        rtmChannel.on('ChannelMessage', ({ text }, memberId) => log(memberId, text));
+
+        // Presence
+        const wsBase = API.replace(/^http/i,'ws').replace(/\/$/,'');
+        const bare = JWT.replace(/^Bearer\s+/i,'');
+        presence = new WebSocket(`${wsBase}/ws/live/${encodeURIComponent(SID)}?token=${encodeURIComponent(bare)}`);
+        presence.onmessage = (e)=>{ try{ const m=JSON.parse(e.data); if(m.type==='viewer_count') $('viewers').textContent=String(m.count||0); if(m.type==='session_info'){ durationSecs = Number(m.live_duration_seconds||0); startTicker(); } if(m.type==='session_ended'){ setStatus('Ended','muted'); leave(); } if(m.type==='comment'){ log(m.user_name||m.user_id, m.message); } }catch(_){} };
+
+        setStatus('Watching', 'ok');
+      }
+
+      async function leave(){
+        try{ if(rtmChannel) await rtmChannel.leave(); }catch(_){ }
+        try{ if(clientRTM) await clientRTM.logout(); }catch(_){ }
+        try{ if(clientRTC) await clientRTC.leave(); }catch(_){ }
+        try{ if(presence) presence.close(); }catch(_){ }
+        clientRTC=clientRTM=rtmChannel=presence=null; stopTicker(); setStatus('Left','muted');
+      }
+
+      async function send(){ const t=$('msg').value.trim(); if(!t || !rtmChannel) return; try{ await rtmChannel.sendMessage({ text: t }); log('me', t); $('msg').value=''; }catch(_){ } }
+
+      $('leave').onclick = leave;
+      $('send').onclick = send;
+      join();
+    </script>
+  </body>
+  </html>

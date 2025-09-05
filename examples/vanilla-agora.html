@@ -22,7 +22,7 @@
     </p>
 
     <div class="row">
-      <label>App Base <input id="appBase" type="text" value="http://localhost:8000" /></label>
+      <label>App Base <input id="appBase" type="text" value="https://192.168.102.133:8000" /></label>
       <label>Token Base <input id="tokBase" type="text" value="http://localhost:4000" /></label>
       <label>Agora App ID <input id="appId" type="text" value="" placeholder="AGORA_APP_ID" /></label>
     </div>
@@ -53,7 +53,17 @@
 
     <script type="module">
       import AgoraRTC from "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/esm/index.js";
-      import AgoraRTM from "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@1.6.3/AgoraRTM.esm.browser.js";
+      // Ensure RTM SDK v2.2.3 (UMD) is loaded for consistency across demos
+      async function ensureRtmV2() {
+        if (window.AgoraRTM) return window.AgoraRTM;
+        const src = "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js";
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script'); s.src = src; s.async = true;
+          s.onload = resolve; s.onerror = () => reject(new Error('RTM load failed'));
+          document.head.appendChild(s);
+        });
+        return window.AgoraRTM;
+      }
 
       const el = (id) => document.getElementById(id);
       const chat = el('chat');
@@ -105,16 +115,18 @@
 
         // RTM
         const { token: rtmToken } = await getRtmToken(TOK_BASE, UID);
+        const AgoraRTM = await ensureRtmV2();
         clientRTM = await AgoraRTM.createInstance(APP_ID);
         await clientRTM.login({ uid: UID, token: rtmToken });
         rtmChannel = clientRTM.createChannel(SID);
         await rtmChannel.join();
         rtmChannel.on('ChannelMessage', ({ text }, memberId) => log(memberId, text));
 
-        // Presence (optional)
+        // Presence (optional) — use App Base, not page host
         try {
-          const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-          presence = new WebSocket(`${proto}://${location.host}/ws/live/${SID}?token=${JWT}`);
+          const wsBase = APP_BASE.trim().replace(/\/$/, '').replace(/^http/i,'ws');
+          const bare = JWT.replace(/^Bearer\s+/i, '');
+          presence = new WebSocket(`${wsBase}/ws/live/${encodeURIComponent(SID)}?token=${encodeURIComponent(bare)}`);
           presence.onmessage = (e) => {
             const m = JSON.parse(e.data);
             if (m.type === 'viewer_count') log('system', `Viewers: ${m.count}`);
@@ -151,4 +163,3 @@
     </script>
   </body>
   </html>
-

@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vendor – Go Live</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 18px; }
+      h1 { margin: 0 0 8px 0; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+      input, button { padding: 6px 8px; }
+      input[type=text] { min-width: 260px; }
+      .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
+      .muted { color: #666; }
+      .ok { color: #0a0; }
+      .err { color: #c00; }
+      video { width: 420px; height: 236px; background: #000; }
+      #chat { border: 1px solid #ddd; height: 180px; overflow: auto; padding: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>Vendor – Go Live</h1>
+    <div class="card">
+      <div class="row">
+        <label>API <input id="apiBase" type="text" value="https://192.168.102.133:8000" /></label>
+        <label>Tokens <input id="tokBase" type="text" value="http://localhost:4000" /></label>
+        <label>Agora App ID <input id="appId" type="text" placeholder="AGORA_APP_ID" /></label>
+      </div>
+      <div class="row">
+        <label>Title <input id="title" type="text" placeholder="My Live" value="My Live" /></label>
+        <button id="goLive">Go Live</button>
+        <button id="endLive" disabled>End Live</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <div class="row">
+        <small class="muted">JWT and session ID are handled internally. Login from the /app page first.</small>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <video id="local" autoplay playsinline muted></video>
+        <div style="min-width:200px">
+          <div><strong>Viewers:</strong> <span id="viewers">0</span></div>
+          <div><strong>Duration:</strong> <span id="duration">00:00:00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input id="msg" type="text" placeholder="Type a message" />
+        <button id="send">Send</button>
+      </div>
+      <div id="chat"></div>
+    </div>
+
+    <script type="module">
+      import AgoraRTC from "https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/esm/index.js";
+      // Ensure RTM v2.2.3 (UMD)
+      async function ensureRtmV2() {
+        if (window.AgoraRTM) return window.AgoraRTM;
+        const src = "https://cdn.jsdelivr.net/npm/agora-rtm-sdk@2.2.3/agora-rtm.js";
+        await new Promise((res, rej) => { const s=document.createElement('script'); s.src=src; s.async=true; s.onload=res; s.onerror=()=>rej(new Error('RTM load failed')); document.head.appendChild(s); });
+        return window.AgoraRTM;
+      }
+
+      const $ = (id) => document.getElementById(id);
+      const log = (who, text) => { const d = document.createElement('div'); d.textContent = `${who}: ${text}`; $('chat').appendChild(d); $('chat').scrollTop = $('chat').scrollHeight; };
+
+      // Load saved state from the index page
+      (function init() {
+        const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        if (st.apiBase) $('apiBase').value = st.apiBase;
+        if (st.tokBase) $('tokBase').value = st.tokBase;
+        if (st.appId) $('appId').value = st.appId;
+      })();
+
+      function saveState(extras={}) {
+        const cur = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        const next = { ...cur, apiBase: $('apiBase').value.trim(), tokBase: $('tokBase').value.trim(), appId: $('appId').value.trim(), ...extras };
+        localStorage.setItem('streammeon_state', JSON.stringify(next));
+      }
+
+      let sid=null, jwt=null, user=null;
+      let clientRTC=null, localCam=null, localMic=null;
+      let clientRTM=null, rtmChannel=null;
+      let presence=null, ticker=null, durationSecs=0;
+
+      function setStatus(msg, cls='muted') { const el=$('status'); el.textContent=msg; el.className=cls; }
+      function fmtHMS(secs){ secs=Math.max(0,Math.floor(secs||0)); const h=String(Math.floor(secs/3600)).padStart(2,'0'); const m=String(Math.floor((secs%3600)/60)).padStart(2,'0'); const s=String(secs%60).padStart(2,'0'); return `${h}:${m}:${s}`; }
+      function startTicker(){ stopTicker(); $('duration').textContent = fmtHMS(durationSecs); ticker=setInterval(()=>{ durationSecs+=1; $('duration').textContent=fmtHMS(durationSecs); },1000);} 
+      function stopTicker(){ if(ticker){ clearInterval(ticker); ticker=null; } }
+
+      function getAuth() {
+        const st = JSON.parse(localStorage.getItem('streammeon_state') || '{}');
+        jwt = st.jwt || null; user = st.user || null;
+        return !!(jwt && user && user.role === 'vendor');
+      }
+
+      async function goLive(){
+        try{
+          if(!getAuth()){ setStatus('Login as vendor in /app first', 'err'); return; }
+          const API = $('apiBase').value.trim();
+          const TOK = $('tokBase').value.trim();
+          const APP = $('appId').value.trim();
+          const title = $('title').value.trim() || 'My Live';
+          if(!API || !TOK){ setStatus('Fill API and Tokens base URLs', 'err'); return; }
+          // Create session
+          const created = await fetch(`${API}/live/sessions`, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization': `Bearer ${jwt}` }, body: JSON.stringify({ title })});
+          if(!created.ok){ setStatus('Create live failed', 'err'); return; }
+          const data = await created.json(); sid = data.session_id; saveState({ last_sid: sid });
+          // RTC join & publish
+          const uid = String(user.id);
+          const rtcTokRes = await fetch(`${TOK.replace(/\/$/,'')}/v1/rtc/token?` + new URLSearchParams({ channelName: sid, role: 'host', uid }));
+          if(!rtcTokRes.ok){ setStatus('RTC token failed', 'err'); return; }
+          const rtcJson = await rtcTokRes.json();
+          const token = rtcJson.token;
+          if(!APP) APP = rtcJson.appId || APP;
+          clientRTC = AgoraRTC.createClient({ mode:'live', codec:'vp8' });
+          clientRTC.setClientRole('host');
+          await clientRTC.join(APP, sid, token, uid);
+          localCam = await AgoraRTC.createCameraVideoTrack();
+          localMic = await AgoraRTC.createMicrophoneAudioTrack();
+          await clientRTC.publish([localCam, localMic]);
+          localCam.play('local');
+
+          // RTM join (comments)
+          const rtmTokRes = await fetch(`${TOK.replace(/\/$/,'')}/v1/rtm/token?` + new URLSearchParams({ uid }));
+          const rtmJson = await rtmTokRes.json();
+          const AgoraRTM = await ensureRtmV2();
+          clientRTM = await AgoraRTM.createInstance(APP);
+          await clientRTM.login({ uid, token: rtmJson.token });
+          rtmChannel = clientRTM.createChannel(sid); await rtmChannel.join();
+          rtmChannel.on('ChannelMessage', ({ text }, memberId) => log(memberId, text));
+
+          // Presence WS
+          const wsBase = API.replace(/^http/i,'ws').replace(/\/$/,'');
+          const bare = String(jwt).replace(/^Bearer\s+/i,'');
+          presence = new WebSocket(`${wsBase}/ws/live/${encodeURIComponent(sid)}?token=${encodeURIComponent(bare)}`);
+          presence.onmessage = (e)=>{
+            try{ const m=JSON.parse(e.data);
+              if(m.type==='viewer_count') $('viewers').textContent = String(m.count||0);
+              if(m.type==='session_info'){ durationSecs = Number(m.live_duration_seconds||0); startTicker(); }
+              if(m.type==='session_ended'){ setStatus('Ended', 'muted'); endLive(); }
+              if(m.type==='comment'){ log(m.user_name||m.user_id, m.message); }
+            }catch(_){ }
+          };
+
+          $('endLive').disabled = false; setStatus('LIVE', 'ok');
+        }catch(e){ setStatus(e?.message || 'Failed', 'err'); }
+      }
+
+      async function endLive(){
+        try{
+          const API = $('apiBase').value.trim();
+          if(sid){ await fetch(`${API}/live/sessions/${encodeURIComponent(sid)}/end`, { method:'POST', headers:{ 'Authorization': `Bearer ${jwt}` } }); }
+        }catch(_){ }
+        try{ if(rtmChannel) await rtmChannel.leave(); }catch(_){ }
+        try{ if(clientRTM) await clientRTM.logout(); }catch(_){ }
+        try{ if(localCam) localCam.close(); }catch(_){ }
+        try{ if(localMic) localMic.close(); }catch(_){ }
+        try{ if(clientRTC) await clientRTC.leave(); }catch(_){ }
+        try{ if(presence) presence.close(); }catch(_){ }
+        clientRTC=clientRTM=rtmChannel=localCam=localMic=presence=null; stopTicker();
+        $('endLive').disabled = true; setStatus('Idle', 'muted');
+      }
+
+      async function sendMsg(){
+        const text = $('msg').value.trim(); if(!text || !rtmChannel) return;
+        try{ await rtmChannel.sendMessage({ text }); log('me', text); $('msg').value=''; }catch(_){ }
+      }
+
+      $('goLive').onclick = goLive;
+      $('endLive').onclick = endLive;
+      $('send').onclick = sendMsg;
+    </script>
+  </body>
+  </html>
