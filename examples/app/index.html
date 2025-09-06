@@ -5,7 +5,61 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>KMK Live</title>
     <style>
-      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; }
+      :root {
+        --bg: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --card-bg: #ffffff;
+        --card-text: #111827;
+        --code-bg: #f3f4f6;
+        --btn-bg: #f3f4f6;
+        --btn-text: #111827;
+        --live-thumb: #e5e7eb;
+        --live-outline: #e5e7eb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b0f14;
+          --text: #e5e7eb;
+          --muted: #9ca3af;
+          --border: #1f2937;
+          --card-bg: #0f141a;
+          --card-text: #e5e7eb;
+          --code-bg: #0b0f14;
+          --btn-bg: #111827;
+          --btn-text: #e5e7eb;
+          --live-thumb: #111827;
+          --live-outline: #1f2937;
+        }
+      }
+      :root[data-theme="light"] {
+        --bg: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --card-bg: #ffffff;
+        --card-text: #111827;
+        --code-bg: #f3f4f6;
+        --btn-bg: #f3f4f6;
+        --btn-text: #111827;
+        --live-thumb: #e5e7eb;
+        --live-outline: #e5e7eb;
+      }
+      :root[data-theme="dark"] {
+        --bg: #0b0f14;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --border: #1f2937;
+        --card-bg: #0f141a;
+        --card-text: #e5e7eb;
+        --code-bg: #0b0f14;
+        --btn-bg: #111827;
+        --btn-text: #e5e7eb;
+        --live-thumb: #111827;
+        --live-outline: #1f2937;
+      }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; background: var(--bg); color: var(--text); }
       h2 { margin-top: 24px; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
       label { display: inline-grid; grid-template-columns: 140px 1fr; align-items: center; gap: 8px; }
@@ -15,17 +69,55 @@
         label { grid-template-columns: 1fr; }
         label > input[type=text], label > input[type=password], label > select { min-width: 0; width: 100%; }
       }
-      .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
-      .muted { color: #666; }
-      .ok { color: #0a0; }
-      .err { color: #c00; }
-      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+      .card { border: 1px solid var(--border); padding: 10px; border-radius: 8px; margin: 8px 0; background: var(--card-bg); color: var(--card-text); }
+      .muted { color: var(--muted); }
+      .ok { color: #10b981; }
+      .err { color: #ef4444; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
       .hidden { display: none; }
-      code { background:#f6f8fa; padding:2px 4px; border-radius:4px; }
+      code { background: var(--code-bg); padding:2px 4px; border-radius:4px; color: var(--text); }
+      /* Live cards */
+      .live-card { position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; cursor: pointer; background: var(--card-bg); }
+      .live-thumb { position: relative; aspect-ratio: 16/9; background: var(--live-thumb); }
+      .live-badge { position: absolute; top: 8px; left: 8px; background: #e11d48; color: #fff; padding: 4px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; }
+      .live-metrics { position: absolute; bottom: 8px; left: 8px; display: flex; gap: 8px; font-size: 12px; color:#e5e7eb; background: rgba(17,24,39,0.6); padding: 4px 8px; border-radius: 999px; }
+      .live-meta { padding: 10px; }
+      .live-title { font-weight: 700; margin-bottom: 4px; color: var(--text); }
+      .live-vendor { color: var(--muted); font-size: 13px; }
+      .live-card:hover { outline: 2px solid var(--border); }
+      /* The element that receives remote video */
+      .live-video { position:absolute; inset:0; }
     </style>
   </head>
   <body>
-    <h1>KMK Live</h1>
+    <h1>
+      KMK Live
+      <span style="float:right; font-size:14px; font-weight:600">
+        <button id="themeToggle" class="icon-btn" title="Theme: System" aria-label="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--btn-bg);color:var(--btn-text);"></button>
+      </span>
+    </h1>
+    <script>
+      (function() {
+        const key = 'ui_theme_pref';
+        const root = document.documentElement;
+        const order = ['system','light','dark'];
+        function render(theme){
+          const btn = document.getElementById('themeToggle'); if(!btn) return;
+          let icon='🖥️', label='System';
+          if(theme==='light'){ icon='☀️'; label='Light'; }
+          if(theme==='dark'){ icon='🌙'; label='Dark'; }
+          btn.textContent = icon; btn.title = `Theme: ${label}`; btn.setAttribute('aria-label', `Theme: ${label}`);
+        }
+        function apply(theme){
+          if (!theme || theme === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', theme);
+          try { localStorage.setItem(key, theme || 'system'); } catch(_){}
+          render(theme || 'system');
+        }
+        const saved = (function(){ try { return localStorage.getItem(key); } catch(_) { return null; } })();
+        apply(saved || 'system');
+        window.addEventListener('DOMContentLoaded', function(){ const btn=document.getElementById('themeToggle'); if(!btn) return; btn.addEventListener('click', function(){ const cur=(function(){ try{return localStorage.getItem(key)||'system';}catch(_){return 'system';} })(); const idx=Math.max(0,order.indexOf(cur)); const next=order[(idx+1)%order.length]; apply(next); }); });
+      })();
+    </script>
 
     <div class="card">
       <div class="row">
@@ -66,7 +158,8 @@
         localStorage.setItem('streammeon_state', JSON.stringify(saved));
         if (saved.user) setUser(saved.user, saved.jwt);
         refreshActive();
-        setInterval(refreshActive, 5000);
+        // Faster refresh for near real-time viewer counts without opening WS
+        setInterval(refreshActive, 2000);
       })();
 
       function saveState(extras={}) {
@@ -111,29 +204,131 @@
         }
       }
 
+      // Lightweight formatter
+      function fmtHMS(secs){ secs=Math.max(0,Math.floor(secs||0)); const h=String(Math.floor(secs/3600)).padStart(2,'0'); const m=String(Math.floor((secs%3600)/60)).padStart(2,'0'); const s=String(secs%60).padStart(2,'0'); return `${h}:${m}:${s}`; }
+
       function renderActive(items) {
         const container = document.getElementById('activeList');
         const empty = document.getElementById('activeEmpty');
-        container.innerHTML = '';
-        if (!items.length) { empty.classList.remove('hidden'); return; }
-        empty.classList.add('hidden');
+        // Keep existing cards to preserve previews; update metrics and add/remove as needed
+        const existing = new Map(Array.from(container.children).map(el => [el.getAttribute('data-sid'), el]));
+        const seen = new Set();
         for (const it of items) {
-          const card = document.createElement('div');
-          card.className = 'card';
-          const url = new URL('./viewer.html', location.href); url.searchParams.set('sid', it.session_id);
+          const sid = it.session_id;
+          seen.add(sid);
           const secs = Number(it.live_duration_seconds||0);
-          const h = String(Math.floor(secs/3600)).padStart(2,'0');
-          const m = String(Math.floor((secs%3600)/60)).padStart(2,'0');
-          const s = String(secs%60).padStart(2,'0');
-          card.innerHTML = `
-            <div><strong>${it.title}</strong></div>
-            <div class="muted">Vendor: ${it.vendor?.name || 'n/a'}</div>
-            <div>Viewers: ${it.viewer_count} • Duration: ${h}:${m}:${s}</div>
-            <div><a href="${url.toString()}" target="_blank">Join</a></div>
-          `;
-          container.appendChild(card);
+          let card = existing.get(sid);
+          const url = new URL('./viewer.html', location.href); url.searchParams.set('sid', sid);
+          if (!card) {
+            card = document.createElement('div');
+            card.className = 'live-card';
+            card.setAttribute('data-sid', sid);
+            card.innerHTML = `
+              <div class="live-thumb">
+                <div class="live-video" id="vid-${sid}"></div>
+                <span class="live-badge">LIVE</span>
+                <div class="live-metrics">
+                  <span class="viewer-count" title="Current viewers">👁️ <b>${it.viewer_count}</b></span>
+                  <span class="duration" title="Elapsed">⏱️ <b>${fmtHMS(secs)}</b></span>
+                </div>
+              </div>
+              <div class="live-meta">
+                <div class="live-title">${escapeHtml(it.title)}</div>
+                <div class="live-vendor">Vendor: ${escapeHtml(it.vendor?.name || 'n/a')}</div>
+              </div>`;
+            card.addEventListener('click', () => { location.href = url.toString(); });
+            container.appendChild(card);
+            // Hook preview on first render of this card
+            try { Preview.observe(sid, card.querySelector('#vid-'+CSS.escape(sid))); } catch(_) {}
+          } else {
+            // Update dynamic bits only
+            const vc = card.querySelector('.viewer-count b'); if (vc) vc.textContent = String(it.viewer_count);
+            const dl = card.querySelector('.duration b'); if (dl) dl.textContent = fmtHMS(secs);
+          }
         }
+        // Remove stale cards
+        for (const [sid, el] of existing.entries()) {
+          if (!seen.has(sid)) { try { Preview.stop(sid); } catch(_) {}; el.remove(); }
+        }
+        empty.classList.toggle('hidden', items.length > 0);
       }
+
+      function escapeHtml(s){
+        return String(s || '').replace(/[&<>"']/g, (c) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[c] || c);
+      }
+
+      // --- Lightweight live video previews (muted, limited concurrency) ---
+      const Preview = (() => {
+        const ACTIVE = new Map(); // sid -> { client, mountedEl, joined }
+        const LIMIT = 2; // max concurrent previews to avoid heavy CPU/network
+        let AGORA_READY = false;
+        function loadSdk() {
+          return new Promise((resolve, reject) => {
+            if (window.AgoraRTC) { AGORA_READY = true; resolve(); return; }
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/agora-rtc-sdk-ng@4.20.2/AgoraRTC_N.js';
+            s.async = true; s.onload = () => { AGORA_READY = true; resolve(); };
+            s.onerror = () => reject(new Error('Agora SDK failed to load'));
+            document.head.appendChild(s);
+          });
+        }
+        async function start(sid, el) {
+          try {
+            if (ACTIVE.has(sid)) return; // already previewing
+            // Enforce concurrency limit
+            if (ACTIVE.size >= LIMIT) {
+              // stop the oldest
+              const oldSid = ACTIVE.keys().next().value; stop(oldSid);
+            }
+            await loadSdk();
+            const st = JSON.parse(localStorage.getItem('streammeon_state')||'{}');
+            const tokBase = (st.tokBase||'').replace(/\/$/,'');
+            if (!tokBase) return;
+            const uid = 'p_' + Math.random().toString(36).slice(2,8);
+            const res = await fetch(`${tokBase}/v1/rtc/token?` + new URLSearchParams({ channelName: sid, role: 'audience', uid }));
+            if (!res.ok) throw new Error('token fetch failed');
+            const { appId, token } = await res.json();
+            const client = AgoraRTC.createClient({ mode:'live', codec:'vp8' });
+            client.setClientRole('audience');
+            client.on('user-published', async (user, mediaType) => {
+              try { await client.subscribe(user, mediaType); } catch(_) { return; }
+              if (mediaType === 'video') {
+                try { user.videoTrack.play(el); } catch(_) {}
+              }
+              // do not play audio for previews
+            });
+            client.on('user-unpublished', (user, mediaType) => {
+              if (mediaType === 'video') {
+                try { const id = 'remote-'+user.uid; const el2=document.getElementById(id); if (el2) el2.remove(); } catch(_) {}
+              }
+            });
+            await client.join(appId, sid, token, uid);
+            ACTIVE.set(sid, { client, mountedEl: el, joined: true });
+          } catch(_) {}
+        }
+        async function stop(sid) {
+          const info = ACTIVE.get(sid); if (!info) return;
+          try { await info.client.leave(); } catch(_) {}
+          try { info.client.removeAllListeners(); } catch(_) {}
+          ACTIVE.delete(sid);
+        }
+        // Observe viewport to lazy start/stop
+        const io = new IntersectionObserver((entries) => {
+          entries.forEach(e => {
+            const sid = e.target.getAttribute('data-sid') || e.target.id.replace(/^vid-/, '');
+            if (!sid) return;
+            if (e.isIntersecting) start(sid, e.target);
+            else stop(sid);
+          });
+        }, { root: null, threshold: 0.25 });
+        function observe(sid, el) {
+          if (!el) return; el.setAttribute('data-sid', sid); io.observe(el);
+        }
+        window.addEventListener('beforeunload', () => { for (const sid of Array.from(ACTIVE.keys())) stop(sid); });
+        return { observe, stop };
+      })();
 
       document.getElementById('login').onclick = login;
     </script>

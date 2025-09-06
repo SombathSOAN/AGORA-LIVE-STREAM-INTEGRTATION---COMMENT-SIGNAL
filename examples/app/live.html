@@ -5,7 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vendor – Go Live</title>
     <style>
-      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; }
+      :root {
+        --bg: #ffffff; --text: #111827; --muted: #6b7280; --border: #e5e7eb; --card-bg: #ffffff; --card-text: #111827; --btn-bg:#f3f4f6; --btn-text:#111827;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg:#0b0f14; --text:#e5e7eb; --muted:#9ca3af; --border:#1f2937; --card-bg:#0f141a; --card-text:#e5e7eb; --btn-bg:#111827; --btn-text:#e5e7eb; }
+      }
+      :root[data-theme="light"] { --bg:#ffffff; --text:#111827; --muted:#6b7280; --border:#e5e7eb; --card-bg:#ffffff; --card-text:#111827; --btn-bg:#f3f4f6; --btn-text:#111827; }
+      :root[data-theme="dark"] { --bg:#0b0f14; --text:#e5e7eb; --muted:#9ca3af; --border:#1f2937; --card-bg:#0f141a; --card-text:#e5e7eb; --btn-bg:#111827; --btn-text:#e5e7eb; }
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; margin: 18px; background: var(--bg); color: var(--text); }
       h1 { margin: 0 0 8px 0; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; align-items: center; }
       label { display: inline-grid; grid-template-columns: 140px 1fr; align-items: center; gap: 8px; }
@@ -15,19 +23,27 @@
         label { grid-template-columns: 1fr; }
         label > input[type=text], label > select { min-width: 0; width: 100%; }
       }
-      .card { border: 1px solid #ddd; padding: 10px; border-radius: 6px; margin: 8px 0; }
-      .muted { color: #666; }
-      .ok { color: #0a0; }
-      .err { color: #c00; }
+      .card { border: 1px solid var(--border); padding: 10px; border-radius: 6px; margin: 8px 0; background: var(--card-bg); color: var(--card-text); }
+      .muted { color: var(--muted); }
+      .ok { color: #10b981; }
+      .err { color: #ef4444; }
       video { width: 420px; height: 236px; background: #000; }
       #chat { border: 1px solid #ddd; height: 180px; overflow: auto; padding: 6px; }
     </style>
   </head>
   <body>
-    <h1>Vendor – Go Live</h1>
+    <h1>
+      Vendor – Go Live
+      <span style="float:right; font-size:14px; font-weight:600">
+        <button id="themeToggle" class="icon-btn" title="Theme: System" aria-label="Toggle theme" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--btn-bg);color:var(--btn-text);"></button>
+      </span>
+    </h1>
+    <script>
+      (function(){ const key='ui_theme_pref', root=document.documentElement; const order=['system','light','dark']; function render(t){ const btn=document.getElementById('themeToggle'); if(!btn) return; let icon='🖥️', label='System'; if(t==='light'){ icon='☀️'; label='Light'; } if(t==='dark'){ icon='🌙'; label='Dark'; } btn.textContent=icon; btn.title=`Theme: ${label}`; btn.setAttribute('aria-label', `Theme: ${label}`);} function apply(t){ if(!t||t==='system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', t); try{localStorage.setItem(key,t||'system');}catch(_){} render(t||'system'); } const saved=(function(){ try{return localStorage.getItem(key);}catch(_){return null;} })(); apply(saved||'system'); window.addEventListener('DOMContentLoaded',()=>{ const btn=document.getElementById('themeToggle'); if(!btn) return; btn.addEventListener('click', ()=>{ const cur=(function(){ try{return localStorage.getItem(key)||'system';}catch(_){return 'system';} })(); const idx=Math.max(0,order.indexOf(cur)); const next=order[(idx+1)%order.length]; apply(next); }); }); })();
+    </script>
     <div class="card">
       <div class="row">
-        <label>API <input id="apiBase" type="text" value="https://172.20.10.3:8000" /></label>
+        <label>API <input id="apiBase" type="text" value="https://192.168.1.122:8000" /></label>
         <label>Tokens <input id="tokBase" type="text" value="http://localhost:4000" /></label>
         <label>Agora App ID <input id="appId" type="text" placeholder="AGORA_APP_ID" /></label>
       </div>

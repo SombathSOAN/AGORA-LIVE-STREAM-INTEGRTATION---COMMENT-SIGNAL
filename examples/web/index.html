@@ -15,7 +15,12 @@
         --warn: #f59e0b;
         --card-bg: #ffffff;
         --pill-bg: #374151;
+        --panel-bg: #f9fafb;
+        --panel-text: #111827;
+        --btn-bg: #f3f4f6;
+        --btn-text: #111827;
       }
+      /* System preference when no explicit theme is set */
       @media (prefers-color-scheme: dark) {
         :root {
           --bg: #0b0f14;
@@ -24,7 +29,36 @@
           --border: #1f2937;
           --card-bg: #0f141a;
           --pill-bg: #111827;
+          --panel-bg: #0b0f14;
+          --panel-text: #e5e7eb;
+          --btn-bg: #111827;
+          --btn-text: #e5e7eb;
         }
+      }
+      /* Explicit theme overrides */
+      :root[data-theme="light"] {
+        --bg: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --card-bg: #ffffff;
+        --pill-bg: #374151;
+        --panel-bg: #f9fafb;
+        --panel-text: #111827;
+        --btn-bg: #f3f4f6;
+        --btn-text: #111827;
+      }
+      :root[data-theme="dark"] {
+        --bg: #0b0f14;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --border: #1f2937;
+        --card-bg: #0f141a;
+        --pill-bg: #111827;
+        --panel-bg: #0b0f14;
+        --panel-text: #e5e7eb;
+        --btn-bg: #111827;
+        --btn-text: #e5e7eb;
       }
       html, body { height: 100%; }
       body {
@@ -56,9 +90,9 @@
       .row { margin: 10px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
       .video { width: 100%; max-width: 480px; aspect-ratio: 16/9; background: #111; border-radius: 8px; }
-      #log { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; background: #0b0f14; color: #e5e7eb; border: 1px solid var(--border); padding: 8px; height: 160px; overflow: auto; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-      .panel { height: 160px; overflow: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: #0b0f14; color: #e5e7eb; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-      button { margin-right: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: #111827; color: #e5e7eb; cursor: pointer; }
+      #log { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; background: var(--panel-bg); color: var(--panel-text); border: 1px solid var(--border); padding: 8px; height: 160px; overflow: auto; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .panel { height: 160px; overflow: auto; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: var(--panel-bg); color: var(--panel-text); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      button { margin-right: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--btn-bg); color: var(--btn-text); cursor: pointer; }
       button:disabled { opacity: .6; cursor: not-allowed; }
       .minor { color: var(--muted); font-size: 12px; }
       .muted { color: #ef4444; font-weight: 600; }
@@ -87,7 +121,7 @@
       .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card-bg); }
       .segmented input { display: none; }
       .segmented label { padding: 8px 12px; cursor: pointer; user-select: none; background: var(--card-bg); color: var(--text); }
-      .segmented input:checked + label { background: #111827; color: #e5e7eb; }
+      .segmented input:checked + label { background: var(--btn-bg); color: var(--btn-text); }
       /* border divider between options (works for two options) */
       .segmented label + input + label { border-left: 1px solid var(--border); }
       @media (max-width: 900px) {
@@ -99,11 +133,55 @@
         label { width: 100%; }
         input[type="text"], input[type="url"], select, button { width: 100%; }
       }
+      /* Small icon button used for theme toggle */
+      .icon-btn { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border-radius:8px; border:1px solid var(--border); background: var(--btn-bg); color: var(--btn-text); cursor: pointer; }
+      .icon-btn:disabled { opacity:.6; cursor:not-allowed; }
     </style>
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
   </head>
   <body>
-    <h1>Agora Live Streaming – Mute & Volume <span id="sdkStatus" class="badge pending">SDK: not loaded</span></h1>
+    <h1>
+      Agora Live Streaming – Mute & Volume
+      <span id="sdkStatus" class="badge pending">SDK: not loaded</span>
+      <span style="float:right; font-size:14px; font-weight:600">
+        <button id="themeToggle" class="icon-btn" title="Theme: System" aria-label="Toggle theme"></button>
+      </span>
+    </h1>
+    <script>
+      // Theme persistence + application (icon toggle cycles System → Light → Dark)
+      (function() {
+        const key = 'ui_theme_pref';
+        const root = document.documentElement;
+        const order = ['system','light','dark'];
+        function apply(theme) {
+          if (!theme || theme === 'system') { root.removeAttribute('data-theme'); }
+          else { root.setAttribute('data-theme', theme); }
+          try { localStorage.setItem(key, theme || 'system'); } catch (_) {}
+          render(theme || 'system');
+        }
+        function render(theme){
+          const btn = document.getElementById('themeToggle'); if(!btn) return;
+          let icon = '🖥️', label = 'System';
+          if (theme === 'light') { icon = '☀️'; label = 'Light'; }
+          if (theme === 'dark')  { icon = '🌙'; label = 'Dark'; }
+          btn.textContent = icon;
+          btn.title = `Theme: ${label}`;
+          btn.setAttribute('aria-label', `Theme: ${label}`);
+        }
+        const saved = (function(){ try { return localStorage.getItem(key); } catch(_) { return null; } })();
+        const initial = saved || 'system';
+        apply(initial);
+        window.addEventListener('DOMContentLoaded', function(){
+          const btn = document.getElementById('themeToggle'); if(!btn) return;
+          btn.addEventListener('click', function(){
+            const cur = (function(){ try { return localStorage.getItem(key) || 'system'; } catch(_) { return 'system'; } })();
+            const idx = Math.max(0, order.indexOf(cur));
+            const next = order[(idx + 1) % order.length];
+            apply(next);
+          });
+        });
+      })();
+    </script>
     <div id="secureWarn" style="display:none;margin:10px 0;padding:8px 12px;border:1px solid #f6c343;background:#fff8e1;color:#8a6d3b;font-size:14px;border-radius:6px"></div>
     <!-- Hidden developer note about token server; not shown to end users -->
     <p class="minor" style="display:none">Use with the token server from <code>server/</code> (default http://localhost:4000).</p>
@@ -261,7 +339,7 @@
       <!-- KPI row moved to Remote Video panel -->
       <div class="form-row" style="padding:8px 12px 0 12px">
         <label for="backendOrigin">Backend origin</label>
-        <input id="backendOrigin" type="url" value="https://172.20.10.3:8000" />
+        <input id="backendOrigin" type="url" value="https://192.168.1.122:8000" />
       </div>
       <div class="form-row" style="padding:0 12px">
         <label for="liveSessionId">Session ID</label>

@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Usage:
 #   bash scripts/smoke.sh
-#   BASE=https://172.20.10.3:8000 bash scripts/smoke.sh   # if running FastAPI with TLS
+#   BASE=https://192.168.1.122:8000 bash scripts/smoke.sh   # if running FastAPI with TLS
 #
 # It will:
 #   - login (or register) a vendor
@@ -15,7 +15,7 @@ set -euo pipefail
 #   - list active sessions
 #   - end the live session
 
-BASE=${BASE:-https://172.20.10.3:8000}
+BASE=${BASE:-https://192.168.1.122:8000}
 
 CURL=(curl -sS)
 if [[ "$BASE" == https:* ]]; then
