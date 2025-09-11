@@ -15,7 +15,7 @@ set -euo pipefail
 #   - list active sessions
 #   - end the live session
 
-BASE=${BASE:-https://192.168.1.122:8000}
+BASE=${BASE:-https://localhost:8000}
 
 CURL=(curl -sS)
 if [[ "$BASE" == https:* ]]; then
@@ -104,4 +104,3 @@ echo "[8/8] End session"
 "${CURL[@]}" -X POST "$BASE/live/sessions/$sid/end" -H "Authorization: Bearer $v_jwt" | sed -e 's/.*/  &/'
 
 echo "Done. You can re-run to create another session."
-
